@@ -58,16 +58,6 @@ Expand-Archive jwmv-win-x64.zip -DestinationPath "$HOME\.jwmv\bin"
     "User"
 )
 ```
-
-### Build from source
-
-```powershell
-git clone https://github.com/stescobedo92/jwmv.git
-cd jwmv
-dotnet publish src/Jwmv.Cli -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
-# Binary at: src/Jwmv.Cli/bin/Release/net8.0/win-x64/publish/jwmv.exe
-```
-
 ---
 
 ## Quick Start
