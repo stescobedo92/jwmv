@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Jwmv.Cli/Jwmv.Cli.csproj" />
+    <Project Path="src/Jwmv.Core/Jwmv.Core.csproj" />
+    <Project Path="src/Jwmv.Infrastructure/Jwmv.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Jwmv.Tests/Jwmv.Tests.csproj" />
+  </Folder>
+</Solution>

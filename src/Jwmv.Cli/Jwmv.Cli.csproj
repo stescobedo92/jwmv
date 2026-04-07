@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jwmv.Core\Jwmv.Core.csproj" />
+    <ProjectReference Include="..\Jwmv.Infrastructure\Jwmv.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>jwmv</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.1.0</Version>
+    <JwmvReleaseRepository Condition="'$(JwmvReleaseRepository)' == ''"></JwmvReleaseRepository>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(JwmvReleaseRepository)' != ''">
+    <AssemblyMetadata Include="JwmvReleaseRepository" Value="$(JwmvReleaseRepository)" />
+  </ItemGroup>
+
+</Project>

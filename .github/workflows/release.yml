@@ -1,0 +1,126 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version in SemVer format (for example 0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
+      assembly_version: ${{ steps.vars.outputs.assembly_version }}
+
+    steps:
+      - name: Compute version
+        id: vars
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "assembly_version=${VERSION}.0" >> "$GITHUB_OUTPUT"
+
+  build-assets:
+    needs: prepare
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid:
+          - win-x64
+          - win-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish single-file binary
+        shell: pwsh
+        run: >
+          dotnet publish src/Jwmv.Cli/Jwmv.Cli.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -p:AssemblyVersion=${{ needs.prepare.outputs.assembly_version }}
+          -p:FileVersion=${{ needs.prepare.outputs.assembly_version }}
+          -p:InformationalVersion=${{ needs.prepare.outputs.version }}+${{ github.sha }}
+          -p:JwmvReleaseRepository=${{ github.repository }}
+          -o publish/${{ matrix.rid }}
+
+      - name: Package release asset
+        shell: pwsh
+        run: |
+          $dist = Join-Path $pwd "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $assetName = "jwmv-${{ matrix.rid }}.zip"
+          $assetPath = Join-Path $dist $assetName
+          Compress-Archive -Path "publish/${{ matrix.rid }}/jwmv.exe" -DestinationPath $assetPath -Force
+          $hash = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path (Join-Path $dist "$assetName.sha256") -Value "$hash *$assetName"
+
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish-release:
+    needs:
+      - prepare
+      - build-assets
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        shell: bash
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "jwmv ${VERSION}" \
+              --notes "Automated release for jwmv ${VERSION}." \
+              --target "${GITHUB_SHA}"
+          fi
+
+          gh release upload "$TAG" release-assets/* --clobber
