@@ -330,4 +330,3 @@ jobs:
             --body "## Package submission`n`n- Package: stescobedo92.jwmv`n- Version: ${version}`n- URL: https://github.com/stescobedo92/jwmv`n`nAuto-submitted by CI."
 
           Pop-Location
-          }
