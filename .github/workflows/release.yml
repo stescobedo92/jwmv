@@ -164,6 +164,9 @@ jobs:
       - prepare
       - publish-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -188,7 +191,7 @@ jobs:
         working-directory: npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance
 
   # ── Submit winget manifest via wingetcreate ────────────────────────────
   publish-winget:
@@ -199,22 +202,113 @@ jobs:
     if: github.event_name == 'push'
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install wingetcreate
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
 
-      - name: Submit manifest to winget-pkgs
+      - name: Download release assets for SHA256
         shell: pwsh
-        env:
-          WINGET_PAT: ${{ secrets.WINGET_PAT }}
         run: |
           $version = "${{ needs.prepare.outputs.version }}"
-          $x64 = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
-          $arm64 = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
+          Invoke-WebRequest -Uri "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip.sha256" -OutFile x64.sha256
+          Invoke-WebRequest -Uri "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip.sha256" -OutFile arm64.sha256
 
-          .\wingetcreate.exe update stescobedo92.jwmv `
-            --version $version `
-            --urls $x64 $arm64 `
-            --token $env:WINGET_PAT `
-            --submit
+      - name: Build and submit winget manifests
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_PAT }}
+        run: |
+          $version = "${{ needs.prepare.outputs.version }}"
+          $x64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
+          $arm64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
+          $x64Hash = (Get-Content x64.sha256).Split(' ')[0].ToUpperInvariant()
+          $arm64Hash = (Get-Content arm64.sha256).Split(' ')[0].ToUpperInvariant()
+
+          # Fork winget-pkgs if not already forked
+          gh repo fork microsoft/winget-pkgs --clone=false 2>$null
+
+          # Clone sparse checkout
+          gh repo clone stescobedo92/winget-pkgs winget-pkgs -- --depth 1
+          Push-Location winget-pkgs
+          git remote add upstream https://github.com/microsoft/winget-pkgs.git
+          git fetch upstream master --depth 1
+          git checkout -b "jwmv-${version}" upstream/master
+
+          # Create manifest directory
+          $manifestDir = "manifests/s/stescobedo92/jwmv/${version}"
+          New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
+
+          # version.yaml
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+          PackageIdentifier: stescobedo92.jwmv
+          PackageVersion: ${version}
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.6.0
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.version.yaml" -NoNewline
+
+          # installer.yaml
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+          PackageIdentifier: stescobedo92.jwmv
+          PackageVersion: ${version}
+          MinimumOSVersion: 10.0.17763.0
+          InstallerType: zip
+          NestedInstallerType: portable
+          NestedInstallerFiles:
+            - RelativeFilePath: jwmv.exe
+              PortableCommandAlias: jwmv
+          Installers:
+            - Architecture: x64
+              InstallerUrl: ${x64Url}
+              InstallerSha256: ${x64Hash}
+            - Architecture: arm64
+              InstallerUrl: ${arm64Url}
+              InstallerSha256: ${arm64Hash}
+          ManifestType: installer
+          ManifestVersion: 1.6.0
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.installer.yaml" -NoNewline
+
+          # defaultLocale.yaml
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+          PackageIdentifier: stescobedo92.jwmv
+          PackageVersion: ${version}
+          PackageLocale: en-US
+          Publisher: Sergio Triana Escobedo
+          PublisherUrl: https://github.com/stescobedo92
+          Author: Sergio Triana Escobedo
+          PackageName: jwmv
+          PackageUrl: https://github.com/stescobedo92/jwmv
+          License: MIT
+          LicenseUrl: https://github.com/stescobedo92/jwmv/blob/main/LICENSE
+          ShortDescription: A fast, lightweight CLI to install, manage, and switch between multiple Java (JDK) versions on Windows.
+          Tags:
+            - java
+            - jdk
+            - version-manager
+            - cli
+            - developer-tools
+          ManifestType: defaultLocale
+          ManifestVersion: 1.6.0
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.locale.en-US.yaml" -NoNewline
+
+          # Commit and push
+          git add .
+          git commit -m "New package: stescobedo92.jwmv version ${version}"
+          git push -u origin "jwmv-${version}" --force
+
+          # Create PR
+          gh pr create `
+            --repo microsoft/winget-pkgs `
+            --head "stescobedo92:jwmv-${version}" `
+            --title "New package: stescobedo92.jwmv version ${version}" `
+            --body "## Package submission`n`n- Package: stescobedo92.jwmv`n- Version: ${version}`n- URL: https://github.com/stescobedo92/jwmv`n`nAuto-submitted by CI."
+
+          Pop-Location
+          }
