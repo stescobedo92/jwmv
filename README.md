@@ -20,6 +20,28 @@ A fast, lightweight CLI tool to install, manage, and switch between multiple Jav
 
 ## Installation
 
+### winget (recommended)
+
+```powershell
+winget install stescobedo92.jwmv
+```
+
+### npm
+
+```bash
+npm install -g jwmv
+```
+
+> Downloads the native binary for your architecture automatically. No .NET runtime needed.
+
+### .NET global tool
+
+```bash
+dotnet tool install -g jwmv
+```
+
+> Requires the .NET 8 runtime.
+
 ### Download from GitHub Releases
 
 ```powershell

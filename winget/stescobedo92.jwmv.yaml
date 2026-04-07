@@ -1,0 +1,12 @@
+# This file is a reference manifest for submitting to microsoft/winget-pkgs.
+# To publish a new version:
+#   1. Update the version, URLs, and SHA256 hashes below.
+#   2. Fork https://github.com/microsoft/winget-pkgs
+#   3. Create manifests/s/stescobedo92/jwmv/<VERSION>/ with the 3 YAML files.
+#   4. Submit a pull request.
+#
+# Alternatively, use wingetcreate:
+#   wingetcreate update stescobedo92.jwmv --version <VERSION> \
+#     --urls https://github.com/stescobedo92/jwmv/releases/download/v<VERSION>/jwmv-win-x64.zip \
+#           https://github.com/stescobedo92/jwmv/releases/download/v<VERSION>/jwmv-win-arm64.zip \
+#     --submit

@@ -1,0 +1,38 @@
+{
+  "name": "jwmv",
+  "version": "1.0.0",
+  "description": "A fast, lightweight CLI tool to install, manage, and switch between multiple Java (JDK) versions on Windows.",
+  "author": "Sergio Triana Escobedo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stescobedo92/jwmv.git"
+  },
+  "homepage": "https://github.com/stescobedo92/jwmv",
+  "keywords": [
+    "java",
+    "jdk",
+    "version-manager",
+    "sdkman",
+    "windows",
+    "cli"
+  ],
+  "bin": {
+    "jwmv": "./bin/jwmv.js"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/install.js"
+  },
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ]
+}

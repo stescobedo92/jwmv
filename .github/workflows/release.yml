@@ -127,3 +127,94 @@ jobs:
           fi
 
           gh release upload "$TAG" release-assets/* --clobber
+
+  # ── Publish to NuGet as a dotnet global tool ──────────────────────────
+  publish-nuget:
+    needs:
+      - prepare
+      - publish-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Pack NuGet package
+        run: >
+          dotnet pack src/Jwmv.Cli/Jwmv.Cli.csproj
+          -c Release
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -o nupkg
+
+      - name: Push to NuGet.org
+        run: >
+          dotnet nuget push nupkg/*.nupkg
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+  # ── Publish npm wrapper package ───────────────────────────────────────
+  publish-npm:
+    needs:
+      - prepare
+      - publish-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Set npm package version
+        working-directory: npm
+        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Copy shared files
+        run: |
+          cp README.md npm/README.md
+          cp LICENSE npm/LICENSE
+
+      - name: Publish to npm
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  # ── Submit winget manifest via wingetcreate ────────────────────────────
+  publish-winget:
+    needs:
+      - prepare
+      - publish-release
+    runs-on: windows-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Install wingetcreate
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
+
+      - name: Submit manifest to winget-pkgs
+        shell: pwsh
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+        run: |
+          $version = "${{ needs.prepare.outputs.version }}"
+          $x64 = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
+          $arm64 = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
+
+          .\wingetcreate.exe update stescobedo92.jwmv `
+            --version $version `
+            --urls $x64 $arm64 `
+            --token $env:WINGET_PAT `
+            --submit

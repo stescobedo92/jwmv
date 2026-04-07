@@ -17,7 +17,26 @@
     <Nullable>enable</Nullable>
     <Version>0.1.0</Version>
     <JwmvReleaseRepository Condition="'$(JwmvReleaseRepository)' == ''"></JwmvReleaseRepository>
+
+    <!-- dotnet tool packaging -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>jwmv</ToolCommandName>
+    <PackageId>jwmv</PackageId>
+    <Authors>Sergio Triana Escobedo</Authors>
+    <Description>A fast, lightweight CLI tool to install, manage, and switch between multiple Java (JDK) versions on Windows.</Description>
+    <PackageTags>java;jdk;version-manager;sdkman;windows;cli</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/stescobedo92/jwmv</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/stescobedo92/jwmv</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="\" Condition="Exists('..\..\icon.png')" />
+  </ItemGroup>
 
   <ItemGroup Condition="'$(JwmvReleaseRepository)' != ''">
     <AssemblyMetadata Include="JwmvReleaseRepository" Value="$(JwmvReleaseRepository)" />
