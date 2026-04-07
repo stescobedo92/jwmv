@@ -210,12 +210,18 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
 
-      - name: Download release assets for SHA256
+      - name: Download release ZIPs and compute SHA256
         shell: pwsh
         run: |
           $version = "${{ needs.prepare.outputs.version }}"
-          Invoke-WebRequest -Uri "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip.sha256" -OutFile x64.sha256
-          Invoke-WebRequest -Uri "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip.sha256" -OutFile arm64.sha256
+          $x64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
+          $arm64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
+          Invoke-WebRequest -Uri $x64Url -OutFile jwmv-win-x64.zip
+          Invoke-WebRequest -Uri $arm64Url -OutFile jwmv-win-arm64.zip
+          (Get-FileHash -Path jwmv-win-x64.zip -Algorithm SHA256).Hash | Set-Content -Path x64.sha256
+          (Get-FileHash -Path jwmv-win-arm64.zip -Algorithm SHA256).Hash | Set-Content -Path arm64.sha256
+          Write-Host "x64 SHA256: $(Get-Content x64.sha256)"
+          Write-Host "arm64 SHA256: $(Get-Content arm64.sha256)"
 
       - name: Build and submit winget manifests
         shell: pwsh
@@ -225,8 +231,8 @@ jobs:
           $version = "${{ needs.prepare.outputs.version }}"
           $x64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
           $arm64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
-          $x64Hash = (Get-Content x64.sha256).Split(' ')[0].ToUpperInvariant()
-          $arm64Hash = (Get-Content arm64.sha256).Split(' ')[0].ToUpperInvariant()
+          $x64Hash = (Get-Content x64.sha256).Trim()
+          $arm64Hash = (Get-Content arm64.sha256).Trim()
 
           # Fork winget-pkgs if not already forked
           gh repo fork microsoft/winget-pkgs --clone=false 2>$null
