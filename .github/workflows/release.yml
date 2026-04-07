@@ -205,7 +205,7 @@ jobs:
         working-directory: npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance || echo "Package version already published, skipping."
 
   # ── Submit winget manifest via wingetcreate ────────────────────────────
   publish-winget:
@@ -247,13 +247,19 @@ jobs:
           $x64Hash = (Get-Content x64.sha256).Trim()
           $arm64Hash = (Get-Content arm64.sha256).Trim()
 
+          # Configure git identity
+          git config --global user.name "Sergio Triana Escobedo"
+          git config --global user.email "stescobedo.31@gmail.com"
+
           # Fork winget-pkgs if not already forked
           gh repo fork microsoft/winget-pkgs --clone=false 2>$null
 
-          # Clone sparse checkout
+          # Clone the fork
           gh repo clone stescobedo92/winget-pkgs winget-pkgs -- --depth 1
           Push-Location winget-pkgs
-          git remote add upstream https://github.com/microsoft/winget-pkgs.git
+
+          # Sync with upstream
+          git remote add upstream https://github.com/microsoft/winget-pkgs.git 2>$null
           git fetch upstream master --depth 1
           git checkout -b "jwmv-${version}" upstream/master
 
@@ -320,6 +326,7 @@ jobs:
           # Commit and push
           git add .
           git commit -m "New package: stescobedo92.jwmv version ${version}"
+          git remote set-url origin "https://x-access-token:$($env:GH_TOKEN)@github.com/stescobedo92/winget-pkgs.git"
           git push -u origin "jwmv-${version}" --force
 
           # Create PR
