@@ -4,16 +4,12 @@
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const zlib = require("zlib");
 
 const PACKAGE = require("../package.json");
 const VERSION = PACKAGE.version;
 const REPO = "stescobedo92/jwmv";
 
-/**
- * Resolves the GitHub Release asset name for the current platform/arch.
- * jwmv currently only supports Windows (win-x64, win-arm64).
- */
 function getAssetName() {
   if (process.platform !== "win32") {
     console.error(
@@ -21,14 +17,10 @@ function getAssetName() {
     );
     process.exit(1);
   }
-
   const arch = process.arch === "arm64" ? "win-arm64" : "win-x64";
   return `jwmv-${arch}.zip`;
 }
 
-/**
- * Follow redirects (GitHub sends 302) and download to a file.
- */
 function download(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -51,21 +43,74 @@ function download(url, dest) {
 }
 
 /**
- * Extract ZIP using PowerShell (available on all Windows versions).
+ * Extract a ZIP file using only Node.js built-ins (no PowerShell dependency).
+ * ZIP format: https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
  */
 function extractZip(zipPath, destDir) {
+  const buf = fs.readFileSync(zipPath);
   fs.mkdirSync(destDir, { recursive: true });
-  execSync(
-    `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
-    { stdio: "inherit" }
-  );
+
+  // Find End of Central Directory record (search last 65KB for signature 0x06054b50)
+  let eocdOffset = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset === -1) throw new Error("Invalid ZIP: EOCD not found");
+
+  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
+  const cdEntries = buf.readUInt16LE(eocdOffset + 10);
+
+  let offset = cdOffset;
+  for (let i = 0; i < cdEntries; i++) {
+    if (buf.readUInt32LE(offset) !== 0x02014b50) throw new Error("Invalid central directory entry");
+
+    const method = buf.readUInt16LE(offset + 10);
+    const compSize = buf.readUInt32LE(offset + 20);
+    const uncompSize = buf.readUInt32LE(offset + 24);
+    const nameLen = buf.readUInt16LE(offset + 28);
+    const extraLen = buf.readUInt16LE(offset + 30);
+    const commentLen = buf.readUInt16LE(offset + 32);
+    const localHeaderOffset = buf.readUInt32LE(offset + 42);
+    const fileName = buf.toString("utf8", offset + 46, offset + 46 + nameLen);
+
+    // Skip directories
+    if (!fileName.endsWith("/")) {
+      // Read local file header to get actual data offset
+      const localNameLen = buf.readUInt16LE(localHeaderOffset + 26);
+      const localExtraLen = buf.readUInt16LE(localHeaderOffset + 28);
+      const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
+
+      const compressedData = buf.subarray(dataOffset, dataOffset + compSize);
+      let fileData;
+
+      if (method === 0) {
+        // Stored (no compression)
+        fileData = compressedData;
+      } else if (method === 8) {
+        // Deflate
+        fileData = zlib.inflateRawSync(compressedData);
+      } else {
+        console.warn(`Skipping ${fileName}: unsupported compression method ${method}`);
+        offset += 46 + nameLen + extraLen + commentLen;
+        continue;
+      }
+
+      const outPath = path.join(destDir, ...fileName.split("/"));
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, fileData);
+    }
+
+    offset += 46 + nameLen + extraLen + commentLen;
+  }
 }
 
 async function main() {
   const binDir = path.join(__dirname, "..", "bin");
   const exePath = path.join(binDir, "jwmv.exe");
 
-  // Skip if already installed (e.g. CI caching)
   if (fs.existsSync(exePath)) {
     console.log("jwmv binary already present, skipping download.");
     return;
