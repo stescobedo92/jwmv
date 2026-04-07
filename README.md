@@ -509,50 +509,6 @@ java -version   # → Corretto 17
 cd C:\Projects\modern-api
 java -version   # → Temurin 21
 ```
-
-### Scripting with jwmv
-
-```powershell
-# Set JAVA_HOME for a build script
-$env:JAVA_HOME = $(jwmv home 21-tem)
-./gradlew build
-
-# Check if a version is installed
-if (jwmv installed | Select-String "21-tem") {
-    Write-Host "Java 21 Temurin is ready"
-}
-```
-
-### CI/CD usage
-
-```yaml
-# GitHub Actions example
-- name: Install jwmv
-  run: |
-    Invoke-WebRequest -Uri "https://github.com/stescobedo92/jwmv/releases/latest/download/jwmv-win-x64.zip" -OutFile jwmv.zip
-    Expand-Archive jwmv.zip -DestinationPath "$HOME\.jwmv\bin"
-    echo "$HOME\.jwmv\bin" | Out-File -Append $env:GITHUB_PATH
-
-- name: Install Java
-  run: jwmv install 21-tem --default
-```
-
----
-
-## Supported Distributions
-
-| Distribution        | Alias     | Vendor                |
-|---------------------|-----------|-----------------------|
-| Eclipse Temurin     | `tem`     | Adoptium              |
-| Azul Zulu           | `zulu`    | Azul Systems          |
-| Microsoft OpenJDK   | `ms`      | Microsoft             |
-| GraalVM Community   | `graalvm` | Oracle                |
-| Amazon Corretto     | `cor`     | Amazon                |
-| Liberica            | `lib`     | BellSoft              |
-| SAP Machine         | `sap`     | SAP                   |
-| Oracle OpenJDK      | `ojdk`    | Oracle                |
-| Oracle JDK          | `oracle`  | Oracle                |
-
 ---
 
 ## Architecture
