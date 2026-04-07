@@ -7,7 +7,7 @@ const path = require("path");
 const zlib = require("zlib");
 
 const PACKAGE = require("../package.json");
-const VERSION = PACKAGE.version;
+const VERSION = PACKAGE.jwmv?.binaryVersion || PACKAGE.version;
 const REPO = "stescobedo92/jwmv";
 
 function getAssetName() {
