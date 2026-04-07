@@ -29,7 +29,7 @@ winget install stescobedo92.jwmv
 ### npm
 
 ```bash
-npm install -g jwmv
+npm install -g @stescobedo9205/jwmv
 ```
 
 > Downloads the native binary for your architecture automatically. No .NET runtime needed.

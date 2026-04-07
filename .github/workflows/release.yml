@@ -219,23 +219,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install wingetcreate
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: release-*
+          merge-multiple: true
 
-      - name: Download release ZIPs and compute SHA256
+      - name: Compute SHA256 from artifacts
         shell: pwsh
         run: |
-          $version = "${{ needs.prepare.outputs.version }}"
-          $x64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
-          $arm64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
-          Invoke-WebRequest -Uri $x64Url -OutFile jwmv-win-x64.zip
-          Invoke-WebRequest -Uri $arm64Url -OutFile jwmv-win-arm64.zip
-          (Get-FileHash -Path jwmv-win-x64.zip -Algorithm SHA256).Hash | Set-Content -Path x64.sha256
-          (Get-FileHash -Path jwmv-win-arm64.zip -Algorithm SHA256).Hash | Set-Content -Path arm64.sha256
-          Write-Host "x64 SHA256: $(Get-Content x64.sha256)"
-          Write-Host "arm64 SHA256: $(Get-Content arm64.sha256)"
+          $x64Hash = (Get-FileHash -Path release-assets/jwmv-win-x64.zip -Algorithm SHA256).Hash
+          $arm64Hash = (Get-FileHash -Path release-assets/jwmv-win-arm64.zip -Algorithm SHA256).Hash
+          Set-Content -Path x64.sha256 -Value $x64Hash
+          Set-Content -Path arm64.sha256 -Value $arm64Hash
+          Write-Host "x64 SHA256: $x64Hash"
+          Write-Host "arm64 SHA256: $arm64Hash"
 
       - name: Build and submit winget manifests
         shell: pwsh
