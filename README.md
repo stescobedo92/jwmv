@@ -503,11 +503,11 @@ jwmv stores its data under `~/.jwmv/`:
 
 ```powershell
 # Project A needs Java 17
-cd C:\Projects\legacy-app
+cd ~\examples\legacy-app
 echo "17-cor" > .jwmvrc
 
 # Project B needs Java 21
-cd C:\Projects\modern-api
+cd ~\examples\modern-api
 echo "21-tem" > .jwmvrc
 
 # Install both versions
@@ -515,10 +515,10 @@ jwmv install 17-cor
 jwmv install 21-tem --default
 
 # With shell integration, Java switches automatically
-cd C:\Projects\legacy-app
+cd ~\examples\legacy-app
 java -version   # → Corretto 17
 
-cd C:\Projects\modern-api
+cd ~\examples\modern-api
 java -version   # → Temurin 21
 ```
 ---
@@ -533,24 +533,6 @@ Jwmv.Tests           → XUnit tests
 ```
 
 The project follows a clean architecture pattern with dependency inversion. All services are behind interfaces and injected via `Microsoft.Extensions.DependencyInjection`.
-
----
-
-## Building & Testing
-
-```powershell
-# Restore
-dotnet restore
-
-# Build
-dotnet build -c Release
-
-# Test
-dotnet test
-
-# Publish single-file executable
-dotnet publish src/Jwmv.Cli -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
-```
 
 ---
 
