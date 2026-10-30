@@ -17,37 +17,53 @@ public sealed class RegistryUserEnvironmentStore : IUserEnvironmentStore
 {
     private const string EnvironmentKeyPath = "Environment";
 
+    private readonly string _keyPath;
+
+    public RegistryUserEnvironmentStore()
+        : this(EnvironmentKeyPath)
+    {
+    }
+
+    /// <summary>
+    /// Creates a store over another HKCU subkey. Only tests use this, so they never touch the real user environment.
+    /// </summary>
+    internal RegistryUserEnvironmentStore(string keyPath)
+    {
+        _keyPath = keyPath;
+    }
+
     public UserEnvironmentValue? Get(string name)
     {
         EnsureValidName(name);
-        using var key = Registry.CurrentUser.OpenSubKey(EnvironmentKeyPath, writable: false);
+        using var key = Registry.CurrentUser.OpenSubKey(_keyPath, writable: false);
         if (key is null)
         {
             return null;
         }
 
-        var kind = key.GetValueKind(name);
+        // GetValueKind throws IOException for a missing value, so existence has to be checked first.
         var raw = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-        return raw switch
+        if (raw is not string value)
         {
-            string value => new UserEnvironmentValue(value, kind == RegistryValueKind.ExpandString),
-            _ => null
-        };
+            return null;
+        }
+
+        return new UserEnvironmentValue(value, key.GetValueKind(name) == RegistryValueKind.ExpandString);
     }
 
     public void Set(string name, string value, bool isExpandable)
     {
         EnsureValidName(name);
         ArgumentNullException.ThrowIfNull(value);
-        using var key = Registry.CurrentUser.CreateSubKey(EnvironmentKeyPath, writable: true)
-            ?? throw new JwmvException("Unable to open HKCU\\Environment for writing.");
+        using var key = Registry.CurrentUser.CreateSubKey(_keyPath, writable: true)
+            ?? throw new JwmvException($"Unable to open HKCU\\{_keyPath} for writing.");
         key.SetValue(name, value, isExpandable ? RegistryValueKind.ExpandString : RegistryValueKind.String);
     }
 
     public void Remove(string name)
     {
         EnsureValidName(name);
-        using var key = Registry.CurrentUser.OpenSubKey(EnvironmentKeyPath, writable: true);
+        using var key = Registry.CurrentUser.OpenSubKey(_keyPath, writable: true);
         key?.DeleteValue(name, throwOnMissingValue: false);
     }
 
