@@ -18,6 +18,7 @@ public static class ServiceCollectionExtensions
     public const string GitHubClientName = "github";
     public const string GradleClientName = "gradle";
     public const string MavenCentralClientName = "maven-central";
+    public const string ApacheArchiveClientName = "apache-archive";
 
     public static IServiceCollection AddJwmvInfrastructure(this IServiceCollection services)
     {
@@ -29,7 +30,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISdkCatalogCacheStore, JsonSdkCatalogCacheStore>();
         services.AddSingleton<IJavaInstallationStore, JsonJavaInstallationStore>();
         services.AddSingleton<ISdkInstallationStore, JsonSdkInstallationStore>();
-        services.AddSingleton<IArchiveExtractor, ZipArchiveExtractor>();
+        services.AddSingleton<IArchiveExtractor>(_ => new ZipArchiveExtractor());
         services.AddSingleton<IWindowsEnvironmentService, WindowsEnvironmentService>();
         services.AddSingleton<ISdkEnvironmentService, SdkEnvironmentService>();
         services.AddSingleton<IShellProfileIntegrationService, ShellProfileIntegrationService>();
@@ -66,6 +67,12 @@ public static class ServiceCollectionExtensions
             client.BaseAddress = new Uri("https://repo.maven.apache.org/");
             client.DefaultRequestHeaders.UserAgent.ParseAdd("jwmv/1.0");
             client.Timeout = TimeSpan.FromSeconds(90);
+        });
+        services.AddHttpClient(ApacheArchiveClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://archive.apache.org/");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("jwmv/1.0");
+            client.Timeout = TimeSpan.FromSeconds(30);
         });
         services.AddSingleton<IJavaCatalogClient, FoojayCatalogClient>();
         services.AddSingleton<IArchiveDownloader, HttpArchiveDownloader>();
