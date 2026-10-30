@@ -91,6 +91,6 @@ public static partial class JavaIdentifier
         return string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
     }
 
-    [GeneratedRegex(@"[0-9]+|[a-zA-Z]+")]
+    [GeneratedRegex(@"[0-9]+|[a-zA-Z]+", RegexOptions.NonBacktracking, matchTimeoutMilliseconds: 100)]
     private static partial Regex IdentifierTokenizer();
 }
