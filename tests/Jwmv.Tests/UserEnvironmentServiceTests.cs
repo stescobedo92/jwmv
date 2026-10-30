@@ -52,6 +52,33 @@ public sealed class UserEnvironmentServiceTests
     }
 
     [Fact]
+    public async Task ApplyDefaultAsync_KeepsMachineEntriesInTheProcessPath()
+    {
+        var store = new InMemoryUserEnvironmentStore();
+        store.Set("Path", @"%USERPROFILE%\bin", isExpandable: true);
+        var service = new SdkEnvironmentService(store);
+
+        await service.ApplyDefaultAsync(CreateInstalled("gradle", @"C:\jwmv\candidates\gradle\9.5.1"), CancellationToken.None);
+
+        var machine = Environment.ExpandEnvironmentVariables(Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine) ?? string.Empty);
+        var user = Environment.ExpandEnvironmentVariables(@"C:\jwmv\candidates\gradle\9.5.1\bin;%USERPROFILE%\bin");
+        var expected = string.IsNullOrEmpty(machine) ? user : machine + ";" + user;
+        Assert.Equal(expected, store.ProcessValues["Path"]);
+    }
+
+    [Fact]
+    public async Task ClearDefaultAsync_DoesNotCreateAnEmptyUserPath()
+    {
+        var store = new InMemoryUserEnvironmentStore();
+        var service = new SdkEnvironmentService(store);
+
+        await service.ClearDefaultAsync("java", CancellationToken.None);
+
+        Assert.Null(store.Get("Path"));
+        Assert.False(store.ProcessValues.ContainsKey("Path"));
+    }
+
+    [Fact]
     public async Task ClearDefaultAsync_LeavesHomeVariableThatJwmvDidNotSet()
     {
         var store = new InMemoryUserEnvironmentStore();
