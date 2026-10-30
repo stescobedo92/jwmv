@@ -634,6 +634,7 @@ cosign verify-blob jwmv-win-x64.zip `
 
 - **Shell integration** — the profile hook evaluates jwmv's output on every prompt, so jwmv only ever emits environment variable names defined by its own providers and single-quoted, escaped values. Run `jwmv integrate` from the folder where you intend to keep `jwmv.exe`; it warns when the executable lives in Downloads, a temporary folder or a network share.
 - **Environment changes** — `jwmv default` edits the user `Path` in the registry preserving `%VAR%` entries, and only removes `JAVA_HOME`/`*_HOME` values that jwmv itself set.
+- **Continuous analysis** — CodeQL scans the C# sources, the npm installer and the GitHub Actions workflows on every pull request and weekly, Dependabot keeps actions, NuGet and npm dependencies current, and CI fails when a vulnerable NuGet package (including transitive ones) is detected.
 - Reporting vulnerabilities: see [SECURITY.md](./SECURITY.md).
 
 ---
