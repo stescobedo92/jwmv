@@ -20,10 +20,29 @@ internal static class JsonFileHelper
         return await JsonSerializer.DeserializeAsync<T>(stream, SerializerOptions, cancellationToken);
     }
 
+    /// <summary>
+    /// Serializes to a temporary file next to the target and moves it into place, so a crash or serialization
+    /// failure never leaves a truncated config, manifest or catalog cache behind.
+    /// </summary>
     public static async Task WriteAsync<T>(string filePath, T value, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
-        await using var stream = File.Create(filePath);
-        await JsonSerializer.SerializeAsync(stream, value, SerializerOptions, cancellationToken);
+        var temporaryPath = $"{filePath}.{Guid.NewGuid():n}.tmp";
+        try
+        {
+            await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true))
+            {
+                await JsonSerializer.SerializeAsync(stream, value, SerializerOptions, cancellationToken);
+            }
+
+            File.Move(temporaryPath, filePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
     }
 }

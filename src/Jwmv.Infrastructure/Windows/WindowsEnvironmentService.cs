@@ -1,56 +1,68 @@
 using Jwmv.Core;
 using Jwmv.Core.Abstractions;
 using Jwmv.Core.Models;
-using Jwmv.Core.Utilities;
 
 namespace Jwmv.Infrastructure.Windows;
 
-public sealed class WindowsEnvironmentService : IWindowsEnvironmentService
+/// <summary>Legacy Java-only environment service; the multi-SDK equivalent is <see cref="SdkEnvironmentService"/>.</summary>
+public sealed class WindowsEnvironmentService(IUserEnvironmentStore store) : IWindowsEnvironmentService
 {
     public Task ApplyDefaultAsync(InstalledJavaVersion javaVersion, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var binDirectory = Path.Combine(javaVersion.JavaHome, "bin");
-        var currentUserPath = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
-        var previousDefaultBin = Environment.GetEnvironmentVariable(JwmvConstants.DefaultBinVariable, EnvironmentVariableTarget.User);
+        var path = UserEnvironmentPath.Load(store);
+        var previousDefaultBin = store.Get(JwmvConstants.DefaultBinVariable)?.Value;
         if (!string.IsNullOrWhiteSpace(previousDefaultBin))
         {
-            currentUserPath = PathTools.RemovePathEntry(currentUserPath, previousDefaultBin);
+            path = path.Remove(previousDefaultBin);
         }
 
-        var updatedPath = PathTools.PrependPathEntry(currentUserPath, binDirectory);
+        path = path.Prepend(binDirectory);
 
         SetUserVariable("JAVA_HOME", javaVersion.JavaHome);
         SetUserVariable(JwmvConstants.DefaultAliasVariable, javaVersion.Alias);
         SetUserVariable(JwmvConstants.DefaultHomeVariable, javaVersion.JavaHome);
         SetUserVariable(JwmvConstants.DefaultBinVariable, binDirectory);
-        SetUserVariable("Path", updatedPath);
-        EnvironmentBroadcast.Notify();
+        path.Save(store);
+        store.NotifyChanged();
         return Task.CompletedTask;
     }
 
     public Task ClearDefaultAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var currentUserPath = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
-        var previousDefaultBin = Environment.GetEnvironmentVariable(JwmvConstants.DefaultBinVariable, EnvironmentVariableTarget.User);
-        if (!string.IsNullOrWhiteSpace(previousDefaultBin))
+        var path = UserEnvironmentPath.Load(store);
+        var managedHome = store.Get(JwmvConstants.DefaultHomeVariable)?.Value;
+        var managedBin = store.Get(JwmvConstants.DefaultBinVariable)?.Value;
+        if (!string.IsNullOrWhiteSpace(managedBin))
         {
-            currentUserPath = PathTools.RemovePathEntry(currentUserPath, previousDefaultBin);
+            path = path.Remove(managedBin);
         }
 
-        SetUserVariable("JAVA_HOME", null);
-        SetUserVariable(JwmvConstants.DefaultAliasVariable, null);
-        SetUserVariable(JwmvConstants.DefaultHomeVariable, null);
-        SetUserVariable(JwmvConstants.DefaultBinVariable, null);
-        SetUserVariable("Path", currentUserPath);
-        EnvironmentBroadcast.Notify();
+        var currentJavaHome = store.Get("JAVA_HOME")?.Value;
+        if (currentJavaHome is not null && !string.IsNullOrWhiteSpace(managedHome) && string.Equals(currentJavaHome, managedHome, StringComparison.OrdinalIgnoreCase))
+        {
+            RemoveUserVariable("JAVA_HOME");
+        }
+
+        RemoveUserVariable(JwmvConstants.DefaultAliasVariable);
+        RemoveUserVariable(JwmvConstants.DefaultHomeVariable);
+        RemoveUserVariable(JwmvConstants.DefaultBinVariable);
+        path.Save(store);
+        store.NotifyChanged();
         return Task.CompletedTask;
     }
 
-    private static void SetUserVariable(string name, string? value)
+    private void SetUserVariable(string name, string value)
     {
-        Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.User);
-        Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process);
+        store.Set(name, value, isExpandable: false);
+        store.SetProcessValue(name, value);
+    }
+
+    private void RemoveUserVariable(string name)
+    {
+        store.Remove(name);
+        store.SetProcessValue(name, null);
     }
 }
