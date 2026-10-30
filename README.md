@@ -11,7 +11,8 @@ A fast, lightweight CLI tool to install, manage, and switch between Java/JDK and
 - **Install JDKs and JVM SDKs** — Java via [Foojay Disco API](https://api.foojay.io/), plus Gradle, Maven, and Kotlin from official release feeds
 - **Switch versions instantly** — per-session, per-project (`.jwmvrc`), or set persistent defaults per candidate
 - **SDKMAN-style candidates** — list and install supported candidates with `jwmv candidates`, `jwmv list gradle`, and `jwmv install maven 3.9.15`
-- **Verified downloads** — validates supported SHA-256/SHA-512 checksums before extraction
+- **Verified downloads** — every archive must match the checksum published by its catalog before extraction; packages without a checksum are rejected unless you opt in with `--allow-unverified`
+- **Signed self-update** — `jwmv selfupdate` only installs release assets whose SHA-256 and Sigstore (cosign) signature verify against this repository's release workflow
 - **Shell integration** — PowerShell profile bootstrap for automatic version switching
 - **Self-update** — update jwmv itself from GitHub Releases
 - **Diagnostics** — `doctor` command detects PATH conflicts and misconfigurations
@@ -25,7 +26,7 @@ A fast, lightweight CLI tool to install, manage, and switch between Java/JDK and
 ### winget (recommended)
 
 ```powershell
-winget install stescobedo92.jwmv
+winget install stescobedo92.JWMV
 ```
 
 ### npm
@@ -164,14 +165,20 @@ jwmv install 21.0.4-tem --default
 
 # Install with forced catalog refresh
 jwmv install 17-zulu --refresh
+
+# Install a package whose catalog entry publishes no checksum (not recommended)
+jwmv install kotlin 1.9.0 --allow-unverified
 ```
 
-| Option          | Description                                |
-|-----------------|--------------------------------------------|
-| `[candidate]`   | Candidate name, optional for Java shorthand |
-| `[version]`     | Candidate version or Java identifier |
-| `-d, --default` | Set as default SDK after install     |
-| `-r, --refresh` | Force refresh the catalog before install   |
+| Option               | Description                                |
+|----------------------|--------------------------------------------|
+| `[candidate]`        | Candidate name, optional for Java shorthand |
+| `[version]`          | Candidate version or Java identifier |
+| `-d, --default`      | Set as default SDK after install     |
+| `-r, --refresh`      | Force refresh the catalog before install   |
+| `--allow-unverified` | Install even when the catalog publishes no checksum for the package |
+
+Downloads are verified before extraction: Java packages use the checksum reported by the Foojay Disco API, Gradle uses the hash from the Gradle version feed, Kotlin uses the `.sha256` asset of the GitHub release, and Maven prefers the hash published on `archive.apache.org` (a different origin from the Maven Central download). When a catalog only publishes a legacy MD5/SHA-1 hash the package is still verified and jwmv prints a warning. When no checksum exists at all the install fails unless `--allow-unverified` is passed.
 
 **Identifier format:** `<version>-<distribution>` where distribution is a short alias:
 
@@ -467,6 +474,8 @@ jwmv selfupdate --repository owner/repo
 | `-r, --repository <REPO>` | GitHub `owner/repo` for releases        |
 | `-t, --tag <TAG>`         | Specific release tag to install          |
 
+Before anything is staged, the downloaded asset must match its published `.sha256` file **and** carry a valid Sigstore (cosign keyless) signature: the `.sig`/`.pem` assets are checked against the Sigstore public-good root, and the signing certificate must belong to a GitHub Actions workflow of the release repository. The updater runs with an absolute PowerShell path, writes a log next to the staged binary, swaps the executable atomically, verifies `jwmv --version` and restores the previous binary if anything fails. Installations owned by winget, npm or `dotnet tool` are not updated in place; use the package manager instead.
+
 ---
 
 ## Shell Integration
@@ -510,6 +519,8 @@ kotlin=2.3.21
 ```
 
 Legacy Java-only files containing just `21-tem` are still accepted and treated as `java=21-tem`.
+
+Keys and values may only contain letters, digits, dots, dashes, underscores and plus signs. Because `.jwmvrc` files are read from any directory you enter (including cloned repositories), jwmv never turns their content into file paths or shell identifiers: a file with an invalid entry is reported as an error and ignored by the shell hook.
 
 When shell integration is active, jwmv automatically activates these versions when you enter the directory. The resolution order for each candidate is:
 
@@ -606,6 +617,26 @@ cd ~\examples\modern-api
 java -version   # → Temurin 21
 gradle -version # → Gradle 9.5.1
 ```
+---
+
+## Security
+
+- **Verified downloads** — see `jwmv install` above. Checksum verification is fail-closed.
+- **Signed releases** — release assets are signed with cosign (keyless, Sigstore) by the GitHub Actions release workflow, and `.sha256` files are published next to them. `jwmv selfupdate` and the npm installer verify both before using a binary. To verify a download yourself:
+
+```powershell
+cosign verify-blob jwmv-win-x64.zip `
+  --certificate jwmv-win-x64.zip.pem `
+  --signature jwmv-win-x64.zip.sig `
+  --certificate-identity-regexp '^https://github.com/stescobedo92/jwmv/\.github/workflows/release\.yml@refs/' `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+- **Shell integration** — the profile hook evaluates jwmv's output on every prompt, so jwmv only ever emits environment variable names defined by its own providers and single-quoted, escaped values. Run `jwmv integrate` from the folder where you intend to keep `jwmv.exe`; it warns when the executable lives in Downloads, a temporary folder or a network share.
+- **Environment changes** — `jwmv default` edits the user `Path` in the registry preserving `%VAR%` entries, and only removes `JAVA_HOME`/`*_HOME` values that jwmv itself set.
+- **Continuous analysis** — CodeQL scans the C# sources, the npm installer and the GitHub Actions workflows on every pull request and weekly, Dependabot keeps actions, NuGet and npm dependencies current, and CI fails when a vulnerable NuGet package (including transitive ones) is detected.
+- Reporting vulnerabilities: see [SECURITY.md](./SECURITY.md).
+
 ---
 
 ## Architecture

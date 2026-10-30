@@ -21,4 +21,19 @@ public sealed class PathToolsTests
 
         Assert.Equal("C:\\Tools", updated);
     }
+
+    [Theory]
+    [InlineData(@"C:\jwmv\manifests", @"C:\jwmv\manifests\21-tem.json", true)]
+    [InlineData(@"C:\jwmv\manifests", @"C:\jwmv\manifests", true)]
+    [InlineData(@"C:\jwmv\manifests\", @"C:\jwmv\manifests\nested\x.json", true)]
+    [InlineData(@"C:\jwmv\manifests", @"c:\JWMV\MANIFESTS\x.json", true)]
+    [InlineData(@"C:\jwmv\manifests", @"C:\jwmv\manifests-evil\x.json", false)]
+    [InlineData(@"C:\jwmv\manifests", @"C:\jwmv\manifests\..\config.json", false)]
+    [InlineData(@"C:\jwmv\manifests", @"C:\jwmv\manifests\..\..\evil.json", false)]
+    [InlineData(@"C:\jwmv\manifests", @"\\server\share\evil.json", false)]
+    [InlineData(@"C:\jwmv\manifests", @"D:\other\x.json", false)]
+    public void IsWithinDirectory_RequiresPathToStayUnderRoot(string root, string path, bool expected)
+    {
+        Assert.Equal(expected, PathTools.IsWithinDirectory(root, path));
+    }
 }

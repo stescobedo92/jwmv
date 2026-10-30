@@ -1,8 +1,8 @@
+using System.Globalization;
 using Jwmv.Core.Abstractions;
 using Jwmv.Infrastructure;
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.Globalization;
 
 namespace Jwmv.Cli.Commands;
 

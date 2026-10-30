@@ -8,4 +8,8 @@
     <PackageReference Include="Microsoft.Extensions.Http" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Jwmv.Tests" />
+  </ItemGroup>
+
 </Project>

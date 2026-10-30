@@ -6,6 +6,10 @@ using Jwmv.Core.Utilities;
 
 namespace Jwmv.Infrastructure.Services;
 
+/// <summary>
+/// Legacy Java-only manager kept for the <c>config</c>, <c>flush</c> and <c>doctor</c> commands.
+/// Installation goes through <see cref="SdkVersionManager"/>, which verifies downloads before extraction.
+/// </summary>
 public sealed class JavaVersionManager(
     IAppContext appContext,
     IClock clock,
@@ -13,8 +17,6 @@ public sealed class JavaVersionManager(
     ICatalogCacheStore catalogCacheStore,
     IJavaCatalogClient javaCatalogClient,
     IJavaInstallationStore installationStore,
-    IArchiveDownloader archiveDownloader,
-    IArchiveExtractor archiveExtractor,
     IWindowsEnvironmentService windowsEnvironmentService,
     JwmvPaths paths) : IJavaVersionManager
 {
@@ -27,192 +29,15 @@ public sealed class JavaVersionManager(
     public Task<IReadOnlyList<InstalledJavaVersion>> ListInstalledAsync(CancellationToken cancellationToken) =>
         installationStore.GetInstalledVersionsAsync(cancellationToken);
 
-    public async Task<InstallJavaResult> InstallAsync(InstallJavaRequest request, IProgress<InstallProgressUpdate>? progress, CancellationToken cancellationToken)
-    {
-        paths.EnsureCreated();
-        progress?.Report(new InstallProgressUpdate
-        {
-            Phase = InstallPhase.Resolving,
-            Percentage = 2,
-            Status = $"Resolving {request.Identifier}"
-        });
-
-        var exactInstalled = await installationStore.FindByAliasAsync(request.Identifier, cancellationToken);
-        if (exactInstalled is not null)
-        {
-            var result = new InstallJavaResult
-            {
-                InstalledVersion = exactInstalled,
-                AlreadyInstalled = true,
-                DefaultWasUpdated = false
-            };
-
-            if (request.SetAsDefault)
-            {
-                await SetDefaultInternalAsync(exactInstalled, cancellationToken);
-                return result with { DefaultWasUpdated = true };
-            }
-
-            return result;
-        }
-
-        var packages = await GetCatalogAsync(request.ForceCatalogRefresh, cancellationToken);
-        var package = ResolveBestPackage(packages, request.Identifier);
-        progress?.Report(new InstallProgressUpdate
-        {
-            Phase = InstallPhase.Resolving,
-            Percentage = 8,
-            Status = $"Selected {package.Alias}"
-        });
-
-        var installed = await installationStore.FindByAliasAsync(package.Alias, cancellationToken);
-        if (installed is not null)
-        {
-            var alreadyInstalledResult = new InstallJavaResult
-            {
-                InstalledVersion = installed,
-                AlreadyInstalled = true,
-                DefaultWasUpdated = false
-            };
-
-            if (request.SetAsDefault)
-            {
-                await SetDefaultInternalAsync(installed, cancellationToken);
-                return alreadyInstalledResult with { DefaultWasUpdated = true };
-            }
-
-            return alreadyInstalledResult;
-        }
-
-        var archivePath = Path.Combine(paths.ArchivesDirectory, package.FileName);
-        if (!File.Exists(archivePath))
-        {
-            progress?.Report(new InstallProgressUpdate
-            {
-                Phase = InstallPhase.Downloading,
-                Percentage = 10,
-                Status = $"Downloading {package.FileName}"
-            });
-
-            var downloadProgress = new Progress<ArchiveDownloadProgress>(update =>
-            {
-                var totalBytes = update.TotalBytes;
-                var percentage = totalBytes is > 0
-                    ? 10 + (update.BytesTransferred / (double)totalBytes.Value * 70d)
-                    : 10;
-                progress?.Report(new InstallProgressUpdate
-                {
-                    Phase = InstallPhase.Downloading,
-                    Percentage = Math.Min(80, percentage),
-                    Status = $"Downloading {package.FileName}"
-                });
-            });
-
-            await archiveDownloader.DownloadAsync(package.DownloadUri, archivePath, downloadProgress, cancellationToken);
-        }
-        else
-        {
-            progress?.Report(new InstallProgressUpdate
-            {
-                Phase = InstallPhase.Downloading,
-                Percentage = 80,
-                Status = $"Using cached archive {package.FileName}"
-            });
-        }
-
-        var extractionRoot = Path.Combine(paths.TempDirectory, Guid.NewGuid().ToString("n"));
-        Directory.CreateDirectory(extractionRoot);
-
-        try
-        {
-            progress?.Report(new InstallProgressUpdate
-            {
-                Phase = InstallPhase.Extracting,
-                Percentage = 82,
-                Status = $"Extracting {package.FileName}"
-            });
-
-            var extractionProgress = new Progress<ArchiveExtractionProgress>(update =>
-            {
-                var fraction = update.TotalEntries > 0
-                    ? update.EntriesProcessed / (double)update.TotalEntries
-                    : 0d;
-                progress?.Report(new InstallProgressUpdate
-                {
-                    Phase = InstallPhase.Extracting,
-                    Percentage = 82 + (fraction * 13d),
-                    Status = $"Extracting {package.FileName}"
-                });
-            });
-
-            await archiveExtractor.ExtractZipAsync(archivePath, extractionRoot, extractionProgress, cancellationToken);
-
-            var javaHome = FindJavaHome(extractionRoot);
-            var finalDirectory = Path.Combine(paths.JavaCandidatesDirectory, package.Alias);
-            progress?.Report(new InstallProgressUpdate
-            {
-                Phase = InstallPhase.Finalizing,
-                Percentage = 96,
-                Status = $"Finalizing {package.Alias}"
-            });
-
-            if (Directory.Exists(finalDirectory))
-            {
-                Directory.Delete(finalDirectory, recursive: true);
-            }
-
-            Directory.Move(javaHome, finalDirectory);
-
-            var installedVersion = new InstalledJavaVersion
-            {
-                Alias = package.Alias,
-                Distribution = package.Distribution,
-                DistributionAlias = package.DistributionAlias,
-                JavaVersion = package.JavaVersion,
-                DistributionVersion = package.DistributionVersion,
-                InstallDirectory = finalDirectory,
-                JavaHome = finalDirectory,
-                ArchiveType = package.ArchiveType,
-                PackageFileName = package.FileName,
-                SourcePackageId = package.Id,
-                InstalledAtUtc = clock.UtcNow
-            };
-
-            await installationStore.SaveAsync(installedVersion, cancellationToken);
-            var defaultWasUpdated = false;
-            if (request.SetAsDefault)
-            {
-                await SetDefaultInternalAsync(installedVersion, cancellationToken);
-                defaultWasUpdated = true;
-            }
-
-            progress?.Report(new InstallProgressUpdate
-            {
-                Phase = InstallPhase.Completed,
-                Percentage = 100,
-                Status = $"Installed {installedVersion.Alias}"
-            });
-
-            return new InstallJavaResult
-            {
-                InstalledVersion = installedVersion,
-                AlreadyInstalled = false,
-                DefaultWasUpdated = defaultWasUpdated
-            };
-        }
-        finally
-        {
-            if (Directory.Exists(extractionRoot))
-            {
-                Directory.Delete(extractionRoot, recursive: true);
-            }
-        }
-    }
-
     public async Task UninstallAsync(string identifier, CancellationToken cancellationToken)
     {
         var installed = await ResolveInstalledAsync(identifier, cancellationToken)
             ?? throw new JavaNotInstalledException(identifier);
+
+        if (Directory.Exists(installed.InstallDirectory) && !PathTools.IsStrictlyWithinDirectory(paths.JavaCandidatesDirectory, installed.InstallDirectory))
+        {
+            throw new JwmvException($"Refusing to delete '{installed.InstallDirectory}' because it is outside the jwmv Java directory ({paths.JavaCandidatesDirectory}).");
+        }
 
         var config = await configStore.LoadAsync(cancellationToken);
         if (string.Equals(config.DefaultJavaAlias, installed.Alias, StringComparison.OrdinalIgnoreCase))
@@ -226,10 +51,13 @@ public sealed class JavaVersionManager(
             Directory.Delete(installed.InstallDirectory, recursive: true);
         }
 
-        var archivePath = Path.Combine(paths.ArchivesDirectory, installed.PackageFileName);
-        if (!string.IsNullOrWhiteSpace(installed.PackageFileName) && File.Exists(archivePath))
+        if (SdkIdentifier.IsSafeFileName(installed.PackageFileName))
         {
-            File.Delete(archivePath);
+            var archivePath = Path.Combine(paths.ArchivesDirectory, installed.PackageFileName);
+            if (File.Exists(archivePath))
+            {
+                File.Delete(archivePath);
+            }
         }
 
         await installationStore.DeleteAsync(installed.Alias, cancellationToken);
@@ -368,7 +196,7 @@ public sealed class JavaVersionManager(
             throw new JwmvException("Only PowerShell shell integration is implemented.");
         }
 
-        var executable = EscapePowerShell(appContext.ExecutablePath);
+        var executable = PowerShellLiteral.Escape(appContext.ExecutablePath);
         var script = $$"""
 $script:jwmvExe = '{{executable}}'
 $env:{{JwmvConstants.ShellIntegrationVariable}} = '1'
@@ -433,6 +261,11 @@ function global:prompt {
                 if (string.IsNullOrWhiteSpace(javaIdentifier))
                 {
                     throw new ProjectConfigurationException($"The project file '{candidate}' does not contain a valid 'java=' entry.");
+                }
+
+                if (!SdkIdentifier.IsSafeAlias(javaIdentifier))
+                {
+                    throw new ProjectConfigurationException($"The project file '{candidate}' contains an invalid Java version '{javaIdentifier}'.");
                 }
 
                 return new ProjectJavaConfiguration
@@ -531,35 +364,6 @@ function global:prompt {
             .FirstOrDefault();
     }
 
-    private static JavaDistributionPackage ResolveBestPackage(IReadOnlyList<JavaDistributionPackage> packages, string identifier)
-    {
-        var package = packages
-            .Where(item => JavaIdentifier.Matches(item.Alias, identifier))
-            .OrderBy(item => item.Alias, Comparer<string>.Create(JavaIdentifier.CompareAliasesDescending))
-            .FirstOrDefault();
-
-        return package ?? throw new JavaPackageNotFoundException(identifier);
-    }
-
-    private static string FindJavaHome(string extractionRoot)
-    {
-        if (HasJavaBinary(extractionRoot))
-        {
-            return extractionRoot;
-        }
-
-        var candidates = Directory.EnumerateDirectories(extractionRoot, "*", SearchOption.AllDirectories)
-            .Where(HasJavaBinary)
-            .OrderBy(path => path.Length)
-            .ToList();
-
-        return candidates.FirstOrDefault()
-            ?? throw new InvalidOperationException("The downloaded archive was extracted successfully, but no Java home could be discovered.");
-    }
-
-    private static bool HasJavaBinary(string directoryPath) =>
-        File.Exists(Path.Combine(directoryPath, "bin", "java.exe"));
-
     private static ActiveJavaSelection ToActiveSelection(InstalledJavaVersion installedVersion, JavaActivationSource source) =>
         new()
         {
@@ -575,11 +379,11 @@ function global:prompt {
         bool emitConfirmationMessage = false,
         bool persistAsDefault = false)
     {
-        var javaHome = EscapePowerShell(installedVersion.JavaHome);
-        var binDirectory = EscapePowerShell(Path.Combine(installedVersion.JavaHome, "bin"));
-        var alias = EscapePowerShell(installedVersion.Alias);
-        var sourceText = EscapePowerShell(source.ToString());
-        var displayAlias = EscapePowerShell(installedVersion.DisplayAlias);
+        var javaHome = PowerShellLiteral.Escape(installedVersion.JavaHome);
+        var binDirectory = PowerShellLiteral.Escape(Path.Combine(installedVersion.JavaHome, "bin"));
+        var alias = PowerShellLiteral.Escape(installedVersion.Alias);
+        var sourceText = PowerShellLiteral.Escape(source.ToString());
+        var displayAlias = PowerShellLiteral.Escape(installedVersion.DisplayAlias);
         var confirmationLine = emitConfirmationMessage
             ? persistAsDefault
                 ? $"Write-Host 'Activated {displayAlias} for this session and saved it as the global default.' -ForegroundColor Green"
@@ -614,8 +418,6 @@ Remove-Item Env:\{{JwmvConstants.SessionHomeVariable}} -ErrorAction SilentlyCont
 Remove-Item Env:\{{JwmvConstants.SessionBinVariable}} -ErrorAction SilentlyContinue
 Remove-Item Env:\{{JwmvConstants.SessionSourceVariable}} -ErrorAction SilentlyContinue
 """;
-
-    private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
     private static async Task<string?> ParseProjectJavaIdentifierAsync(string filePath, CancellationToken cancellationToken)
     {

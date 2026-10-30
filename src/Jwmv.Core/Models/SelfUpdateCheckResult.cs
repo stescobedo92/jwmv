@@ -10,6 +10,9 @@ public sealed record SelfUpdateCheckResult
     public required Uri ReleasePageUri { get; init; }
     public required string AssetName { get; init; }
     public required Uri AssetDownloadUri { get; init; }
+    public required Uri ChecksumAssetUri { get; init; }
+    public required Uri SignatureAssetUri { get; init; }
+    public required Uri CertificateAssetUri { get; init; }
     public bool IsUpdateAvailable { get; init; }
     public bool IsForced { get; init; }
 }

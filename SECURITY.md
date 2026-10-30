@@ -4,14 +4,32 @@ We take the security of **jwmv** seriously. This document explains which version
 
 ## Supported versions
 
-Only the latest minor release on the `0.x` line currently receives security updates. Once a `1.x` line is published, this table will be updated accordingly.
+Only the latest release on the `1.x` line receives security updates.
 
 | Version      | Supported          |
 | ------------ | ------------------ |
-| 0.x (latest) | :white_check_mark: |
-| < 0.x latest | :x:                |
+| 1.x (latest) | :white_check_mark: |
+| < 1.0        | :x:                |
 
-We recommend always running the most recent release. You can check your installed version with `jwmv --version` and upgrade with `jwmv selfupdate`.
+We recommend always running the most recent release. You can check your installed version with `jwmv --version` and upgrade with `jwmv selfupdate`, which verifies the SHA-256 and Sigstore signature of the release asset before installing it.
+
+## Release integrity
+
+Every release asset (`jwmv-win-x64.zip`, `jwmv-win-arm64.zip`) is published together with:
+
+- `<asset>.sha256` — SHA-256 checksum,
+- `<asset>.sig` and `<asset>.pem` — cosign keyless signature and Fulcio certificate issued to the GitHub Actions release workflow of this repository,
+- `<asset>.sigstore.json` — the Sigstore bundle.
+
+`jwmv selfupdate` and the npm installer refuse assets that do not verify. You can verify a download manually with `cosign verify-blob` (see the README).
+
+Verification runs offline against the Sigstore root embedded in the clients: they check the certificate chain, the code-signing usage, the identity of this repository's `release.yml` workflow and the GitHub Actions OIDC issuer, evaluated at the start of the certificate's validity window. They do not query the Rekor transparency log, so they cannot prove *when* a signature was produced; the published `.sigstore.json` bundles let you verify log inclusion yourself with `cosign verify-blob --bundle`.
+
+## Security automation
+
+- CodeQL analyses the C# sources, the npm installer and the GitHub Actions workflows on every pull request and on a weekly schedule.
+- Dependabot proposes updates for GitHub Actions, NuGet and npm dependencies, and CI fails when a vulnerable NuGet package (including transitive ones) is detected.
+- Every action used by the workflows is pinned to a commit SHA and runs with the minimum permissions it needs.
 
 ## Reporting a vulnerability
 

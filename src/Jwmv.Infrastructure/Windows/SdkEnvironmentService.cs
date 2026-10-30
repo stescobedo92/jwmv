@@ -1,65 +1,90 @@
 using Jwmv.Core;
 using Jwmv.Core.Abstractions;
+using Jwmv.Core.Exceptions;
 using Jwmv.Core.Models;
 using Jwmv.Core.Utilities;
 
 namespace Jwmv.Infrastructure.Windows;
 
-public sealed class SdkEnvironmentService : ISdkEnvironmentService
+public sealed class SdkEnvironmentService(IUserEnvironmentStore store) : ISdkEnvironmentService
 {
     public Task ApplyDefaultAsync(InstalledSdkVersion installedVersion, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var currentUserPath = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
-        var previousDefaultBin = Environment.GetEnvironmentVariable(GetDefaultVariable(installedVersion.CandidateName, "BIN"), EnvironmentVariableTarget.User);
-        if (!string.IsNullOrWhiteSpace(previousDefaultBin))
+        var candidate = SdkIdentifier.NormalizeCandidateName(installedVersion.CandidateName);
+        var homeVariable = installedVersion.HomeEnvironmentVariable;
+        if (!SdkIdentifier.IsSafeCandidateName(candidate) || !SdkIdentifier.IsSafeEnvironmentVariableName(homeVariable))
         {
-            currentUserPath = PathTools.RemovePathEntry(currentUserPath, previousDefaultBin);
+            throw new JwmvException($"The installation manifest for {installedVersion.Alias} contains an invalid candidate or environment variable name.");
         }
 
-        var updatedPath = PathTools.PrependPathEntry(currentUserPath, installedVersion.BinDirectory);
-        SetUserVariable(installedVersion.HomeEnvironmentVariable, installedVersion.HomeDirectory);
-        SetUserVariable(GetDefaultVariable(installedVersion.CandidateName, "VERSION"), installedVersion.Alias);
-        SetUserVariable(GetDefaultVariable(installedVersion.CandidateName, "HOME"), installedVersion.HomeDirectory);
-        SetUserVariable(GetDefaultVariable(installedVersion.CandidateName, "BIN"), installedVersion.BinDirectory);
+        var path = UserEnvironmentPath.Load(store);
+        var previousDefaultBin = store.Get(GetDefaultVariable(candidate, "BIN"))?.Value;
+        if (!string.IsNullOrWhiteSpace(previousDefaultBin))
+        {
+            path = path.Remove(previousDefaultBin);
+        }
 
-        if (string.Equals(installedVersion.CandidateName, JwmvConstants.CandidateName, StringComparison.OrdinalIgnoreCase))
+        path = path.Prepend(installedVersion.BinDirectory);
+
+        SetUserVariable(homeVariable, installedVersion.HomeDirectory);
+        SetUserVariable(GetDefaultVariable(candidate, "VERSION"), installedVersion.Alias);
+        SetUserVariable(GetDefaultVariable(candidate, "HOME"), installedVersion.HomeDirectory);
+        SetUserVariable(GetDefaultVariable(candidate, "BIN"), installedVersion.BinDirectory);
+
+        if (string.Equals(candidate, JwmvConstants.CandidateName, StringComparison.OrdinalIgnoreCase))
         {
             SetUserVariable(JwmvConstants.DefaultAliasVariable, installedVersion.Alias);
             SetUserVariable(JwmvConstants.DefaultHomeVariable, installedVersion.HomeDirectory);
             SetUserVariable(JwmvConstants.DefaultBinVariable, installedVersion.BinDirectory);
         }
 
-        SetUserVariable("Path", updatedPath);
-        EnvironmentBroadcast.Notify();
+        path.Save(store);
+        store.NotifyChanged();
         return Task.CompletedTask;
     }
 
     public Task ClearDefaultAsync(string candidateName, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var normalizedCandidate = SdkIdentifier.NormalizeCandidateName(candidateName);
-        var currentUserPath = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
-        var previousDefaultBin = Environment.GetEnvironmentVariable(GetDefaultVariable(normalizedCandidate, "BIN"), EnvironmentVariableTarget.User);
-        if (!string.IsNullOrWhiteSpace(previousDefaultBin))
+        var candidate = SdkIdentifier.NormalizeCandidateName(candidateName);
+        if (!SdkIdentifier.IsSafeCandidateName(candidate))
         {
-            currentUserPath = PathTools.RemovePathEntry(currentUserPath, previousDefaultBin);
+            throw new JwmvException($"'{candidateName}' is not a valid SDK candidate name.");
         }
 
-        SetUserVariable(GetHomeVariable(normalizedCandidate), null);
-        SetUserVariable(GetDefaultVariable(normalizedCandidate, "VERSION"), null);
-        SetUserVariable(GetDefaultVariable(normalizedCandidate, "HOME"), null);
-        SetUserVariable(GetDefaultVariable(normalizedCandidate, "BIN"), null);
-        if (string.Equals(normalizedCandidate, JwmvConstants.CandidateName, StringComparison.OrdinalIgnoreCase))
+        var path = UserEnvironmentPath.Load(store);
+        var managedHome = store.Get(GetDefaultVariable(candidate, "HOME"))?.Value;
+        var managedBin = store.Get(GetDefaultVariable(candidate, "BIN"))?.Value;
+        if (!string.IsNullOrWhiteSpace(managedBin))
         {
-            SetUserVariable("JAVA_HOME", null);
-            SetUserVariable(JwmvConstants.DefaultAliasVariable, null);
-            SetUserVariable(JwmvConstants.DefaultHomeVariable, null);
-            SetUserVariable(JwmvConstants.DefaultBinVariable, null);
+            path = path.Remove(managedBin);
         }
 
-        SetUserVariable("Path", currentUserPath);
-        EnvironmentBroadcast.Notify();
+        // Only remove the public home variable (JAVA_HOME, GRADLE_HOME, ...) when jwmv is the one that set it;
+        // a value the user pointed at another installation is left untouched.
+        RemoveUserVariableIfManaged(GetHomeVariable(candidate), managedHome);
+        RemoveUserVariable(GetDefaultVariable(candidate, "VERSION"));
+        RemoveUserVariable(GetDefaultVariable(candidate, "HOME"));
+        RemoveUserVariable(GetDefaultVariable(candidate, "BIN"));
+
+        if (string.Equals(candidate, JwmvConstants.CandidateName, StringComparison.OrdinalIgnoreCase))
+        {
+            var legacyManagedHome = store.Get(JwmvConstants.DefaultHomeVariable)?.Value;
+            var legacyManagedBin = store.Get(JwmvConstants.DefaultBinVariable)?.Value;
+            if (!string.IsNullOrWhiteSpace(legacyManagedBin))
+            {
+                path = path.Remove(legacyManagedBin);
+            }
+
+            RemoveUserVariableIfManaged("JAVA_HOME", legacyManagedHome);
+            RemoveUserVariable(JwmvConstants.DefaultAliasVariable);
+            RemoveUserVariable(JwmvConstants.DefaultHomeVariable);
+            RemoveUserVariable(JwmvConstants.DefaultBinVariable);
+        }
+
+        path.Save(store);
+        store.NotifyChanged();
         return Task.CompletedTask;
     }
 
@@ -72,9 +97,29 @@ public sealed class SdkEnvironmentService : ISdkEnvironmentService
     public static string GetHomeVariable(string candidateName) =>
         $"{SdkIdentifier.NormalizeCandidateName(candidateName).ToUpperInvariant()}_HOME";
 
-    private static void SetUserVariable(string name, string? value)
+    private void SetUserVariable(string name, string value)
     {
-        Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.User);
-        Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process);
+        store.Set(name, value, isExpandable: false);
+        store.SetProcessValue(name, value);
+    }
+
+    private void RemoveUserVariable(string name)
+    {
+        store.Remove(name);
+        store.SetProcessValue(name, null);
+    }
+
+    private void RemoveUserVariableIfManaged(string name, string? managedValue)
+    {
+        var current = store.Get(name)?.Value;
+        if (current is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(managedValue) && string.Equals(current, managedValue, StringComparison.OrdinalIgnoreCase))
+        {
+            RemoveUserVariable(name);
+        }
     }
 }

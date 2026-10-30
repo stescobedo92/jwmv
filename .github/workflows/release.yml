@@ -11,30 +11,48 @@ on:
         required: true
         type: string
 
+# Least privilege by default; jobs that publish request what they need explicitly.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.vars.outputs.tag }}
       version: ${{ steps.vars.outputs.version }}
       assembly_version: ${{ steps.vars.outputs.assembly_version }}
 
     steps:
-      - name: Compute version
+      - name: Compute and validate version
         id: vars
         shell: bash
+        # Untrusted values are passed through the environment, never interpolated into the script.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-            TAG="v${VERSION}"
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
-            TAG="${GITHUB_REF_NAME}"
-            VERSION="${TAG#v}"
+            VERSION="${REF_NAME#v}"
+            if [ "v${VERSION}" != "$REF_NAME" ]; then
+              echo "::error::Tag '$REF_NAME' must be of the form vMAJOR.MINOR.PATCH"
+              exit 1
+            fi
           fi
 
+          if ! [[ "$VERSION" =~ $semver ]]; then
+            echo "::error::'$VERSION' is not a valid MAJOR.MINOR.PATCH version"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "assembly_version=${VERSION}.0" >> "$GITHUB_OUTPUT"
@@ -42,19 +60,25 @@ jobs:
   build-assets:
     needs: prepare
     runs-on: windows-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         rid:
           - win-x64
           - win-arm64
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_ASSEMBLY_VERSION: ${{ needs.prepare.outputs.assembly_version }}
+      RID: ${{ matrix.rid }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           global-json-file: global.json
 
@@ -63,32 +87,32 @@ jobs:
         run: >
           dotnet publish src/Jwmv.Cli/Jwmv.Cli.csproj
           -c Release
-          -r ${{ matrix.rid }}
+          -r $env:RID
           --self-contained true
           -p:PublishSingleFile=true
           -p:EnableCompressionInSingleFile=true
           -p:DebugType=None
           -p:DebugSymbols=false
-          -p:Version=${{ needs.prepare.outputs.version }}
-          -p:AssemblyVersion=${{ needs.prepare.outputs.assembly_version }}
-          -p:FileVersion=${{ needs.prepare.outputs.assembly_version }}
-          -p:InformationalVersion=${{ needs.prepare.outputs.version }}+${{ github.sha }}
-          -p:JwmvReleaseRepository=${{ github.repository }}
-          -o publish/${{ matrix.rid }}
+          -p:Version=$env:RELEASE_VERSION
+          -p:AssemblyVersion=$env:RELEASE_ASSEMBLY_VERSION
+          -p:FileVersion=$env:RELEASE_ASSEMBLY_VERSION
+          -p:InformationalVersion=$env:RELEASE_VERSION+$env:GITHUB_SHA
+          -p:JwmvReleaseRepository=$env:GITHUB_REPOSITORY
+          -o publish/$env:RID
 
       - name: Package release asset
         shell: pwsh
         run: |
           $dist = Join-Path $pwd "dist"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          $assetName = "jwmv-${{ matrix.rid }}.zip"
+          $assetName = "jwmv-$($env:RID).zip"
           $assetPath = Join-Path $dist $assetName
-          Compress-Archive -Path "publish/${{ matrix.rid }}/jwmv.exe" -DestinationPath $assetPath -Force
+          Compress-Archive -Path "publish/$($env:RID)/jwmv.exe" -DestinationPath $assetPath -Force
           $hash = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Path (Join-Path $dist "$assetName.sha256") -Value "$hash *$assetName"
 
       - name: Upload packaged asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-${{ matrix.rid }}
           path: dist/*
@@ -104,16 +128,18 @@ jobs:
       id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: release-assets
           pattern: release-*
@@ -122,25 +148,49 @@ jobs:
       - name: Sign release assets with cosign
         shell: bash
         run: |
+          set -euo pipefail
           for file in release-assets/*.zip; do
             echo "Signing $file ..."
-            cosign sign-blob --yes --output-signature "${file}.sig" --output-certificate "${file}.pem" "$file"
+            cosign sign-blob --yes \
+              --output-signature "${file}.sig" \
+              --output-certificate "${file}.pem" \
+              --bundle "${file}.sigstore.json" \
+              "$file"
+          done
+
+      - name: Verify signatures before publishing
+        shell: bash
+        # jwmv selfupdate and the npm installer verify exactly these files, so a release must never
+        # ship assets that do not verify against the workflow identity of this repository.
+        run: |
+          set -euo pipefail
+          for file in release-assets/*.zip; do
+            cosign verify-blob \
+              --certificate "${file}.pem" \
+              --signature "${file}.sig" \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$file"
+            expected="$(cut -d' ' -f1 "${file}.sha256")"
+            actual="$(sha256sum "$file" | cut -d' ' -f1)"
+            if [ "$expected" != "$actual" ]; then
+              echo "::error::Checksum file for $file does not match"
+              exit 1
+            fi
           done
 
       - name: Create or update GitHub Release
         shell: bash
         run: |
-          TAG="${{ needs.prepare.outputs.tag }}"
-          VERSION="${{ needs.prepare.outputs.version }}"
-
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --title "jwmv ${VERSION}" \
-              --notes "Automated release for jwmv ${VERSION}." \
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "jwmv ${RELEASE_VERSION}" \
+              --notes "Automated release for jwmv ${RELEASE_VERSION}." \
               --target "${GITHUB_SHA}"
           fi
 
-          gh release upload "$TAG" release-assets/* --clobber
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
 
   # ── Publish to NuGet as a dotnet global tool ──────────────────────────
   publish-nuget:
@@ -148,13 +198,17 @@ jobs:
       - prepare
       - publish-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           global-json-file: global.json
 
@@ -162,13 +216,15 @@ jobs:
         run: >
           dotnet pack src/Jwmv.Cli/Jwmv.Cli.csproj
           -c Release
-          -p:Version=${{ needs.prepare.outputs.version }}
+          -p:Version=$RELEASE_VERSION
           -o nupkg
 
       - name: Push to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: >
           dotnet nuget push nupkg/*.nupkg
-          --api-key ${{ secrets.NUGET_API_KEY }}
+          --api-key "$NUGET_API_KEY"
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
 
@@ -181,20 +237,29 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Set npm package version
+      - name: Test npm installer
         working-directory: npm
-        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm test
+
+      - name: Set npm package and binary version
+        working-directory: npm
+        # Both fields move together so the wrapper always downloads the binary of the same release.
+        run: |
+          npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
+          npm pkg set "jwmv.binaryVersion=$RELEASE_VERSION"
 
       - name: Copy shared files
         run: |
@@ -225,20 +290,24 @@ jobs:
 
           exit "$status"
 
-  # ── Submit winget manifest via wingetcreate ────────────────────────────
+  # ── Submit winget manifest ─────────────────────────────────────────────
   publish-winget:
     needs:
       - prepare
       - publish-release
     runs-on: windows-latest
+    permissions:
+      contents: read
     if: github.event_name == 'push'
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: release-assets
           pattern: release-*
@@ -259,15 +328,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.WINGET_PAT }}
         run: |
-          $version = "${{ needs.prepare.outputs.version }}"
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_VERSION
           $x64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-x64.zip"
           $arm64Url = "https://github.com/stescobedo92/jwmv/releases/download/v${version}/jwmv-win-arm64.zip"
           $x64Hash = (Get-Content x64.sha256).Trim()
           $arm64Hash = (Get-Content arm64.sha256).Trim()
 
-          # Configure git identity
+          # Configure git identity and let gh act as the credential helper so the PAT never lands in a remote URL.
           git config --global user.name "Sergio Triana Escobedo"
           git config --global user.email "stescobedo.31@gmail.com"
+          gh auth setup-git
 
           # Fork winget-pkgs if not already forked
           gh repo fork microsoft/winget-pkgs --clone=false 2>$null
@@ -282,23 +353,25 @@ jobs:
           git checkout -b "jwmv-${version}" upstream/master
 
           # Create manifest directory
-          $manifestDir = "manifests/s/stescobedo92/jwmv/${version}"
+          # The package was accepted into winget-pkgs as stescobedo92.JWMV, so updates must use that identifier.
+          $packageId = "stescobedo92.JWMV"
+          $manifestDir = "manifests/s/stescobedo92/JWMV/${version}"
           New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
 
           # version.yaml
           @"
           # yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
-          PackageIdentifier: stescobedo92.jwmv
+          PackageIdentifier: stescobedo92.JWMV
           PackageVersion: ${version}
           DefaultLocale: en-US
           ManifestType: version
           ManifestVersion: 1.6.0
-          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.version.yaml" -NoNewline
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/$packageId.yaml" -NoNewline
 
           # installer.yaml
           @"
           # yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
-          PackageIdentifier: stescobedo92.jwmv
+          PackageIdentifier: stescobedo92.JWMV
           PackageVersion: ${version}
           MinimumOSVersion: 10.0.17763.0
           InstallerType: zip
@@ -315,18 +388,18 @@ jobs:
               InstallerSha256: ${arm64Hash}
           ManifestType: installer
           ManifestVersion: 1.6.0
-          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.installer.yaml" -NoNewline
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/$packageId.installer.yaml" -NoNewline
 
           # defaultLocale.yaml
           @"
           # yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
-          PackageIdentifier: stescobedo92.jwmv
+          PackageIdentifier: stescobedo92.JWMV
           PackageVersion: ${version}
           PackageLocale: en-US
           Publisher: Sergio Triana Escobedo
           PublisherUrl: https://github.com/stescobedo92
           Author: Sergio Triana Escobedo
-          PackageName: jwmv
+          PackageName: JWMV
           PackageUrl: https://github.com/stescobedo92/jwmv
           License: MIT
           LicenseUrl: https://github.com/stescobedo92/jwmv/blob/main/LICENSE
@@ -339,19 +412,18 @@ jobs:
             - developer-tools
           ManifestType: defaultLocale
           ManifestVersion: 1.6.0
-          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.locale.en-US.yaml" -NoNewline
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/$packageId.locale.en-US.yaml" -NoNewline
 
-          # Commit and push
+          # Commit and push to the fork (the branch is owned by this workflow, so overwriting a previous attempt is intended)
           git add .
-          git commit -m "New package: stescobedo92.jwmv version ${version}"
-          git remote set-url origin "https://x-access-token:$($env:GH_TOKEN)@github.com/stescobedo92/winget-pkgs.git"
+          git commit -m "New version: stescobedo92.JWMV version ${version}"
           git push -u origin "jwmv-${version}" --force
 
           # Create PR
           gh pr create `
             --repo microsoft/winget-pkgs `
             --head "stescobedo92:jwmv-${version}" `
-            --title "New package: stescobedo92.jwmv version ${version}" `
-            --body "## Package submission`n`n- Package: stescobedo92.jwmv`n- Version: ${version}`n- URL: https://github.com/stescobedo92/jwmv`n`nAuto-submitted by CI."
+            --title "New version: stescobedo92.JWMV version ${version}" `
+            --body "## Package submission`n`n- Package: stescobedo92.JWMV`n- Version: ${version}`n- URL: https://github.com/stescobedo92/jwmv`n`nAuto-submitted by CI."
 
           Pop-Location

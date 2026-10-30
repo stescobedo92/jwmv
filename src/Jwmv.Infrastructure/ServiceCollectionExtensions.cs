@@ -3,8 +3,9 @@ using Jwmv.Infrastructure.Catalog;
 using Jwmv.Infrastructure.Compression;
 using Jwmv.Infrastructure.Net;
 using Jwmv.Infrastructure.Runtime;
-using Jwmv.Infrastructure.Shell;
+using Jwmv.Infrastructure.Security;
 using Jwmv.Infrastructure.Services;
+using Jwmv.Infrastructure.Shell;
 using Jwmv.Infrastructure.Storage;
 using Jwmv.Infrastructure.Windows;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,7 @@ public static class ServiceCollectionExtensions
     public const string GitHubClientName = "github";
     public const string GradleClientName = "gradle";
     public const string MavenCentralClientName = "maven-central";
+    public const string ApacheArchiveClientName = "apache-archive";
 
     public static IServiceCollection AddJwmvInfrastructure(this IServiceCollection services)
     {
@@ -28,12 +30,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISdkCatalogCacheStore, JsonSdkCatalogCacheStore>();
         services.AddSingleton<IJavaInstallationStore, JsonJavaInstallationStore>();
         services.AddSingleton<ISdkInstallationStore, JsonSdkInstallationStore>();
-        services.AddSingleton<IArchiveExtractor, ZipArchiveExtractor>();
+        services.AddSingleton<IArchiveExtractor>(_ => new ZipArchiveExtractor());
+        services.AddSingleton<IUserEnvironmentStore>(_ => OperatingSystem.IsWindows()
+            ? new RegistryUserEnvironmentStore()
+            : throw new PlatformNotSupportedException("jwmv manages the Windows user environment and only runs on Windows."));
         services.AddSingleton<IWindowsEnvironmentService, WindowsEnvironmentService>();
         services.AddSingleton<ISdkEnvironmentService, SdkEnvironmentService>();
         services.AddSingleton<IShellProfileIntegrationService, ShellProfileIntegrationService>();
         services.AddSingleton<IJavaVersionManager, JavaVersionManager>();
         services.AddSingleton<ISdkVersionManager, SdkVersionManager>();
+        services.AddSingleton<IReleaseSignatureVerifier>(_ => new SigstoreBlobVerifier(SigstoreTrustRoot.PublicGood));
+        services.AddSingleton<IUpdaterLauncher, PowerShellUpdaterLauncher>();
         services.AddSingleton<ISelfUpdateService, SelfUpdateService>();
         services.AddSingleton<IChecksumVerifier, ChecksumVerifier>();
         services.AddSingleton<ISdkCatalogProvider, FoojaySdkCatalogProvider>();
@@ -63,6 +70,12 @@ public static class ServiceCollectionExtensions
             client.BaseAddress = new Uri("https://repo.maven.apache.org/");
             client.DefaultRequestHeaders.UserAgent.ParseAdd("jwmv/1.0");
             client.Timeout = TimeSpan.FromSeconds(90);
+        });
+        services.AddHttpClient(ApacheArchiveClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://archive.apache.org/");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("jwmv/1.0");
+            client.Timeout = TimeSpan.FromSeconds(30);
         });
         services.AddSingleton<IJavaCatalogClient, FoojayCatalogClient>();
         services.AddSingleton<IArchiveDownloader, HttpArchiveDownloader>();

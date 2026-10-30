@@ -1,6 +1,7 @@
+using System.Diagnostics;
 using Jwmv.Core.Abstractions;
 using Jwmv.Core.Models;
-using System.Diagnostics;
+using Jwmv.Infrastructure.Windows;
 
 namespace Jwmv.Infrastructure.Shell;
 
@@ -49,40 +50,56 @@ public sealed class ShellProfileIntegrationService(IAppContext appContext, ISdkV
             updatedContent = currentContent.TrimEnd() + Environment.NewLine + Environment.NewLine + managedBlock + Environment.NewLine;
         }
 
-        await File.WriteAllTextAsync(targetPath, updatedContent, cancellationToken);
+        // Write through a temporary file so an interrupted write cannot truncate the user's profile.
+        var temporaryPath = $"{targetPath}.{Guid.NewGuid():n}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, updatedContent, cancellationToken);
+            File.Move(temporaryPath, targetPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+
         return targetPath;
     }
 
     private string ResolvePowerShellProfilePath()
     {
-        var fromPwsh = TryReadProfileFromShell("pwsh");
-        if (!string.IsNullOrWhiteSpace(fromPwsh))
+        // Only fully-qualified PowerShell hosts are started, so a pwsh.exe planted in the current directory is never picked up.
+        foreach (var shellPath in ProcessLocator.FindPowerShellCandidates())
         {
-            return fromPwsh;
-        }
-
-        var fromWindowsPowerShell = TryReadProfileFromShell("powershell");
-        if (!string.IsNullOrWhiteSpace(fromWindowsPowerShell))
-        {
-            return fromWindowsPowerShell;
+            var profile = TryReadProfileFromShell(shellPath);
+            if (!string.IsNullOrWhiteSpace(profile))
+            {
+                return profile;
+            }
         }
 
         return Path.Combine(appContext.UserProfileDirectory, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
     }
 
-    private static string? TryReadProfileFromShell(string shellExecutable)
+    private static string? TryReadProfileFromShell(string shellPath)
     {
         try
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = shellExecutable,
-                Arguments = "-NoProfile -Command \"$PROFILE.CurrentUserCurrentHost\"",
+                FileName = shellPath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            startInfo.ArgumentList.Add("-NoLogo");
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-NonInteractive");
+            startInfo.ArgumentList.Add("-Command");
+            startInfo.ArgumentList.Add("$PROFILE.CurrentUserCurrentHost");
 
             using var process = Process.Start(startInfo);
             if (process is null)
@@ -92,11 +109,11 @@ public sealed class ShellProfileIntegrationService(IAppContext appContext, ISdkV
 
             var output = process.StandardOutput.ReadToEnd().Trim();
             process.WaitForExit(3000);
-            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output)
+            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output) && Path.IsPathFullyQualified(output)
                 ? output
                 : null;
         }
-        catch
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
         {
             return null;
         }

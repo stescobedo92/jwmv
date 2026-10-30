@@ -1,7 +1,10 @@
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using Jwmv.Core;
 using Jwmv.Core.Abstractions;
+using Jwmv.Core.Exceptions;
 using Jwmv.Core.Models;
 using Jwmv.Infrastructure;
 using Jwmv.Infrastructure.Net;
@@ -49,6 +52,51 @@ kotlin=2.3.21
         Assert.Equal("21-tem", config!.GetVersion("java"));
     }
 
+    [Theory]
+    [InlineData("java=../../evil")]
+    [InlineData(@"java=..\..\evil")]
+    [InlineData(@"java=C:\attacker\evil")]
+    [InlineData(@"java=\\attacker\share\evil")]
+    [InlineData("../../evil")]
+    [InlineData("java=21-tem'; Remove-Item -Recurse $HOME")]
+    public async Task FindProjectConfigurationAsync_RejectsUnsafeVersionValues(string content)
+    {
+        var repo = Path.Combine(_workspaceRoot, "repo");
+        Directory.CreateDirectory(repo);
+        await File.WriteAllTextAsync(Path.Combine(repo, JwmvConstants.ProjectFileName), content);
+        var manager = CreateManager(repo);
+
+        await Assert.ThrowsAsync<ProjectConfigurationException>(() => manager.FindProjectConfigurationAsync(repo, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("../java=21-tem")]
+    [InlineData("java;evil=21-tem")]
+    public async Task FindProjectConfigurationAsync_RejectsUnsafeCandidateKeys(string content)
+    {
+        var repo = Path.Combine(_workspaceRoot, "repo");
+        Directory.CreateDirectory(repo);
+        await File.WriteAllTextAsync(Path.Combine(repo, JwmvConstants.ProjectFileName), content);
+        var manager = CreateManager(repo);
+
+        await Assert.ThrowsAsync<ProjectConfigurationException>(() => manager.FindProjectConfigurationAsync(repo, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("java=", 1)]
+    [InlineData("=21-tem", 1)]
+    [InlineData("gradle=9.5.1\njava=", 2)]
+    public async Task FindProjectConfigurationAsync_RejectsEntriesWithABlankKeyOrValue(string content, int lineNumber)
+    {
+        var repo = Path.Combine(_workspaceRoot, "repo");
+        Directory.CreateDirectory(repo);
+        await File.WriteAllTextAsync(Path.Combine(repo, JwmvConstants.ProjectFileName), content);
+        var manager = CreateManager(repo);
+
+        var exception = await Assert.ThrowsAsync<ProjectConfigurationException>(() => manager.FindProjectConfigurationAsync(repo, CancellationToken.None));
+        Assert.Contains($"line {lineNumber}", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task BuildUseShellScriptAsync_DoesNotPersistDefault()
     {
@@ -62,6 +110,39 @@ kotlin=2.3.21
         Assert.Contains("JWMV_ACTIVE_JAVA_VERSION", script, StringComparison.Ordinal);
         Assert.Null(environment.LastApplied);
         Assert.Empty((await configStore.LoadAsync(CancellationToken.None)).DefaultVersions);
+    }
+
+    [Fact]
+    public async Task BuildUseShellScriptAsync_UsesProviderHomeVariableInsteadOfManifestValue()
+    {
+        var installed = CreateInstalled("java", "21.0.4-tem", "java.exe") with
+        {
+            HomeEnvironmentVariable = "JAVA_HOME = 'x'; Remove-Item -Recurse $HOME #"
+        };
+        var manager = CreateManager(Path.Combine(_workspaceRoot, "repo"), installed: [installed]);
+
+        var script = await manager.BuildUseShellScriptAsync("java", "21.0.4-tem", ShellKind.PowerShell, CancellationToken.None);
+
+        Assert.Contains("$env:JAVA_HOME = '", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BuildEnvShellScriptAsync_UsesProviderHomeVariableInsteadOfManifestValue()
+    {
+        var repo = Path.Combine(_workspaceRoot, "repo");
+        Directory.CreateDirectory(repo);
+        await File.WriteAllTextAsync(Path.Combine(repo, JwmvConstants.ProjectFileName), "java=21.0.4-tem");
+        var installed = CreateInstalled("java", "21.0.4-tem", "java.exe") with
+        {
+            HomeEnvironmentVariable = "EVIL; Remove-Item -Recurse $HOME #"
+        };
+        var manager = CreateManager(repo, installed: [installed]);
+
+        var script = await manager.BuildEnvShellScriptAsync(repo, ShellKind.PowerShell, CancellationToken.None);
+
+        Assert.Contains("$env:JAVA_HOME = '", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item", script, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -99,12 +180,144 @@ kotlin=2.3.21
             downloader: new WritingArchiveDownloader("not-the-expected-content"),
             extractor: extractor);
 
-        await Assert.ThrowsAsync<Jwmv.Core.Exceptions.JwmvException>(() => manager.InstallAsync(new InstallSdkRequest
+        await Assert.ThrowsAnyAsync<JwmvException>(() => manager.InstallAsync(new InstallSdkRequest
         {
             CandidateName = "gradle",
             Version = "9.5.1"
         }, progress: null, CancellationToken.None));
         Assert.False(extractor.WasCalled);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithoutChecksumFailsClosed()
+    {
+        var extractor = new RecordingArchiveExtractor(createExecutables: true);
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            providers: [new FakeProvider("gradle", "gradle.bat", [CreatePackage("gradle", "9.5.1")])],
+            extractor: extractor);
+
+        await Assert.ThrowsAsync<IntegrityVerificationException>(() => manager.InstallAsync(new InstallSdkRequest
+        {
+            CandidateName = "gradle",
+            Version = "9.5.1"
+        }, progress: null, CancellationToken.None));
+        Assert.False(extractor.WasCalled);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithoutChecksumProceedsOnlyWhenExplicitlyAllowed()
+    {
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            providers: [new FakeProvider("gradle", "gradle.bat", [CreatePackage("gradle", "9.5.1")])]);
+
+        var result = await manager.InstallAsync(new InstallSdkRequest
+        {
+            CandidateName = "gradle",
+            Version = "9.5.1",
+            AllowUnverified = true
+        }, progress: null, CancellationToken.None);
+
+        Assert.Equal("9.5.1", result.InstalledVersion.Alias);
+        Assert.NotNull(result.IntegrityWarning);
+        Assert.Contains("unverified", result.IntegrityWarning, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task InstallAsync_UnsupportedChecksumTypeFailsClosed()
+    {
+        var package = CreatePackage("gradle", "9.5.1") with { Checksum = "abc", ChecksumType = "crc32" };
+        var extractor = new RecordingArchiveExtractor(createExecutables: true);
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            providers: [new FakeProvider("gradle", "gradle.bat", [package])],
+            extractor: extractor);
+
+        await Assert.ThrowsAsync<IntegrityVerificationException>(() => manager.InstallAsync(new InstallSdkRequest
+        {
+            CandidateName = "gradle",
+            Version = "9.5.1"
+        }, progress: null, CancellationToken.None));
+        Assert.False(extractor.WasCalled);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WeakChecksumAlgorithmProducesWarning()
+    {
+#pragma warning disable CA5351 // MD5 only mirrors what a legacy upstream catalog publishes.
+        var package = CreatePackage("gradle", "9.5.1") with
+        {
+            Checksum = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes("archive"))),
+            ChecksumType = "md5"
+        };
+#pragma warning restore CA5351
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            providers: [new FakeProvider("gradle", "gradle.bat", [package])]);
+
+        var result = await manager.InstallAsync(new InstallSdkRequest
+        {
+            CandidateName = "gradle",
+            Version = "9.5.1"
+        }, progress: null, CancellationToken.None);
+
+        Assert.NotNull(result.IntegrityWarning);
+        Assert.Contains("md5", result.IntegrityWarning, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(@"..\..\evil.zip")]
+    [InlineData("../../evil.zip")]
+    [InlineData(@"C:\evil.zip")]
+    public async Task InstallAsync_RejectsUnsafeFileNameFromCatalog(string fileName)
+    {
+        var package = CreatePackage("gradle", "9.5.1") with { FileName = fileName, Checksum = new string('0', 64), ChecksumType = "sha256" };
+        var downloader = new WritingArchiveDownloader("archive");
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            providers: [new FakeProvider("gradle", "gradle.bat", [package])],
+            downloader: downloader);
+
+        await Assert.ThrowsAnyAsync<JwmvException>(() => manager.InstallAsync(new InstallSdkRequest
+        {
+            CandidateName = "gradle",
+            Version = "9.5.1"
+        }, progress: null, CancellationToken.None));
+        Assert.Empty(downloader.Downloaded);
+    }
+
+    [Fact]
+    public async Task InstallAsync_RejectsUnsafeAliasFromCatalog()
+    {
+        var package = CreatePackage("gradle", "9.5.1") with { Alias = @"..\evil", Checksum = new string('0', 64), ChecksumType = "sha256" };
+        var downloader = new WritingArchiveDownloader("archive");
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            providers: [new FakeProvider("gradle", "gradle.bat", [package])],
+            downloader: downloader);
+
+        await Assert.ThrowsAnyAsync<JwmvException>(() => manager.InstallAsync(new InstallSdkRequest
+        {
+            CandidateName = "gradle",
+            Version = @"..\evil"
+        }, progress: null, CancellationToken.None));
+        Assert.Empty(downloader.Downloaded);
+    }
+
+    [Fact]
+    public async Task UninstallAsync_RefusesToDeleteDirectoriesOutsideCandidatesRoot()
+    {
+        var outside = Path.Combine(_workspaceRoot, "outside");
+        Directory.CreateDirectory(outside);
+        var installed = CreateInstalled("gradle", "9.5.1", "gradle.bat") with { InstallDirectory = outside, HomeDirectory = outside };
+        var manager = CreateManager(
+            Path.Combine(_workspaceRoot, "repo"),
+            installed: [installed],
+            providers: [new FakeProvider("gradle", "gradle.bat", [CreatePackage("gradle", "9.5.1")])]);
+
+        await Assert.ThrowsAnyAsync<JwmvException>(() => manager.UninstallAsync("gradle", "9.5.1", CancellationToken.None));
+        Assert.True(Directory.Exists(outside));
     }
 
     [Fact]
@@ -116,13 +329,18 @@ kotlin=2.3.21
 gradle=9.5.1
 maven=3.9.15
 """);
+        var mavenPackage = CreatePackage("maven", "3.9.15") with
+        {
+            Checksum = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("archive"))),
+            ChecksumType = "sha256"
+        };
         var manager = CreateManager(
             repo,
             installed: [CreateInstalled("gradle", "9.5.1", "gradle.bat")],
             providers:
             [
                 new FakeProvider("gradle", "gradle.bat", [CreatePackage("gradle", "9.5.1")]),
-                new FakeProvider("maven", "mvn.cmd", [CreatePackage("maven", "3.9.15")])
+                new FakeProvider("maven", "mvn.cmd", [mavenPackage])
             ],
             downloader: new WritingArchiveDownloader("archive"),
             extractor: new RecordingArchiveExtractor(createExecutables: true));
@@ -132,6 +350,7 @@ maven=3.9.15
         var result = Assert.Single(results);
         Assert.Equal("maven", result.InstalledVersion.CandidateName);
         Assert.Equal("3.9.15", result.InstalledVersion.Alias);
+        Assert.Null(result.IntegrityWarning);
     }
 
     public void Dispose()
@@ -288,8 +507,11 @@ maven=3.9.15
 
     private sealed class WritingArchiveDownloader(string content) : IArchiveDownloader
     {
+        public List<Uri> Downloaded { get; } = [];
+
         public Task DownloadAsync(Uri downloadUri, string destinationPath, IProgress<ArchiveDownloadProgress>? progress, CancellationToken cancellationToken)
         {
+            Downloaded.Add(downloadUri);
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
             File.WriteAllText(destinationPath, content);
             return Task.CompletedTask;

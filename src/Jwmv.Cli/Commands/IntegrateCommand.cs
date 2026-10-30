@@ -1,10 +1,11 @@
 using Jwmv.Core.Abstractions;
+using Jwmv.Infrastructure.Shell;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace Jwmv.Cli.Commands;
 
-public sealed class IntegrateCommand(IShellProfileIntegrationService integrationService, IAnsiConsole console) : AsyncCommand<IntegrateCommand.Settings>
+public sealed class IntegrateCommand(IShellProfileIntegrationService integrationService, IAppContext appContext, IAnsiConsole console) : AsyncCommand<IntegrateCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -22,6 +23,14 @@ public sealed class IntegrateCommand(IShellProfileIntegrationService integration
 
         console.MarkupLine("[green]PowerShell integration installed.[/]");
         console.MarkupLine($"Profile: [grey]{Markup.Escape(targetProfile)}[/]");
+        console.MarkupLine($"Executable: [grey]{Markup.Escape(appContext.ExecutablePath)}[/]");
+
+        var warning = InstallLocationAdvisor.GetWarning(appContext.ExecutablePath, appContext.UserProfileDirectory, Path.GetTempPath());
+        if (warning is not null)
+        {
+            CommandHelpers.WriteWarning(console, warning);
+        }
+
         console.MarkupLine("[grey]Next step:[/] open a new PowerShell window, or run `. $PROFILE` in the current one.");
         console.MarkupLine("[grey]Then use:[/] [blue]jwmv use <version>[/]");
         return 0;
