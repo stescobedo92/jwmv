@@ -23,6 +23,8 @@ Every release asset (`jwmv-win-x64.zip`, `jwmv-win-arm64.zip`) is published toge
 
 `jwmv selfupdate` and the npm installer refuse assets that do not verify. You can verify a download manually with `cosign verify-blob` (see the README).
 
+Verification runs offline against the Sigstore root embedded in the clients: they check the certificate chain, the code-signing usage, the identity of this repository's `release.yml` workflow and the GitHub Actions OIDC issuer, evaluated at the start of the certificate's validity window. They do not query the Rekor transparency log, so they cannot prove *when* a signature was produced; the published `.sigstore.json` bundles let you verify log inclusion yourself with `cosign verify-blob --bundle`.
+
 ## Security automation
 
 - CodeQL analyses the C# sources, the npm installer and the GitHub Actions workflows on every pull request and on a weekly schedule.
