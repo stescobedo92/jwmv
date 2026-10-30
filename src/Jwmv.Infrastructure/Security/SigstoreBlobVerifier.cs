@@ -2,6 +2,7 @@ using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using Jwmv.Core;
 using Jwmv.Core.Abstractions;
 using Jwmv.Core.Exceptions;
 using Jwmv.Core.Models;
@@ -163,13 +164,14 @@ public sealed class SigstoreBlobVerifier(SigstoreTrustRoot trustRoot) : IRelease
 
     private static void VerifyIdentity(string identity, string expectedRepository)
     {
-        var expectedPrefix = $"https://github.com/{expectedRepository.Trim().Trim('/')}/.github/workflows/";
-        var separator = identity.IndexOf('@', StringComparison.Ordinal);
-        if (!identity.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase)
-            || separator <= expectedPrefix.Length
-            || !identity.AsSpan(separator + 1).StartsWith("refs/", StringComparison.Ordinal))
+        // Repository names are case-insensitive on GitHub; the workflow path and the ref prefix are not.
+        var repositoryPrefix = $"https://github.com/{expectedRepository.Trim().Trim('/')}/";
+        var workflowPrefix = $".github/workflows/{JwmvConstants.ReleaseWorkflowFileName}@refs/";
+        if (!identity.StartsWith(repositoryPrefix, StringComparison.OrdinalIgnoreCase)
+            || !identity.AsSpan(repositoryPrefix.Length).StartsWith(workflowPrefix, StringComparison.Ordinal)
+            || identity.Length <= repositoryPrefix.Length + workflowPrefix.Length)
         {
-            throw new IntegrityVerificationException($"The release was signed by '{identity}', which is not a workflow of '{expectedRepository}'.");
+            throw new IntegrityVerificationException($"The release was signed by '{identity}', which is not the release workflow of '{expectedRepository}'.");
         }
     }
 

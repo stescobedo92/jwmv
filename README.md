@@ -628,7 +628,7 @@ gradle -version # → Gradle 9.5.1
 cosign verify-blob jwmv-win-x64.zip `
   --certificate jwmv-win-x64.zip.pem `
   --signature jwmv-win-x64.zip.sig `
-  --certificate-identity-regexp '^https://github.com/stescobedo92/jwmv/' `
+  --certificate-identity-regexp '^https://github.com/stescobedo92/jwmv/\.github/workflows/release\.yml@refs/' `
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
