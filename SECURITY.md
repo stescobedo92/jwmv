@@ -23,6 +23,12 @@ Every release asset (`jwmv-win-x64.zip`, `jwmv-win-arm64.zip`) is published toge
 
 `jwmv selfupdate` and the npm installer refuse assets that do not verify. You can verify a download manually with `cosign verify-blob` (see the README).
 
+## Security automation
+
+- CodeQL analyses the C# sources, the npm installer and the GitHub Actions workflows on every pull request and on a weekly schedule.
+- Dependabot proposes updates for GitHub Actions, NuGet and npm dependencies, and CI fails when a vulnerable NuGet package (including transitive ones) is detected.
+- Every action used by the workflows is pinned to a commit SHA and runs with the minimum permissions it needs.
+
 ## Reporting a vulnerability
 
 Please **do not** open public GitHub issues, discussions, or pull requests for security problems. Instead, use one of the private channels below:
