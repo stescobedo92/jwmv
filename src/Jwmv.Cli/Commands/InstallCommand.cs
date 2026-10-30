@@ -20,6 +20,10 @@ public sealed class InstallCommand(ISdkVersionManager manager, IAnsiConsole cons
 
         [CommandOption("-r|--refresh")]
         public bool ForceRefresh { get; init; }
+
+        [CommandOption("--allow-unverified")]
+        [System.ComponentModel.Description("Install even if the catalog does not publish a checksum for the package (not recommended).")]
+        public bool AllowUnverified { get; init; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -60,12 +64,13 @@ public sealed class InstallCommand(ISdkVersionManager manager, IAnsiConsole cons
             console,
             $"Installing {candidateName} {version}",
             progress => manager.InstallAsync(new InstallSdkRequest
-                {
-                    CandidateName = candidateName,
-                    Version = version!,
-                    SetAsDefault = setDefault,
-                    ForceCatalogRefresh = settings.ForceRefresh
-                }, progress, cancellationToken));
+            {
+                CandidateName = candidateName,
+                Version = version!,
+                SetAsDefault = setDefault,
+                ForceCatalogRefresh = settings.ForceRefresh,
+                AllowUnverified = settings.AllowUnverified
+            }, progress, cancellationToken));
 
         if (result is null)
         {
@@ -80,6 +85,11 @@ public sealed class InstallCommand(ISdkVersionManager manager, IAnsiConsole cons
         {
             CommandHelpers.WriteSuccess(console, $"Installed {result.InstalledVersion.CandidateName} {result.InstalledVersion.Alias}");
             CommandHelpers.WriteInfo(console, $"Home: {result.InstalledVersion.HomeDirectory}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.IntegrityWarning))
+        {
+            CommandHelpers.WriteWarning(console, result.IntegrityWarning);
         }
 
         if (result.DefaultWasUpdated)

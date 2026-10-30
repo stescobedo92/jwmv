@@ -4,6 +4,7 @@ using Jwmv.Core;
 using Jwmv.Core.Abstractions;
 using Jwmv.Core.Models;
 using Jwmv.Core.Utilities;
+using Jwmv.Infrastructure.Windows;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -153,11 +154,18 @@ public sealed class DoctorCommand(
 
     private static async Task<IReadOnlyList<string>> RunWhereAsync(string command, CancellationToken cancellationToken)
     {
+        // where.exe is resolved under %SystemRoot%\System32 so a binary planted in the current directory is never executed.
+        var whereExecutable = ProcessLocator.FindSystemExecutable("where.exe");
+        if (whereExecutable is null)
+        {
+            return [];
+        }
+
         try
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = "where.exe",
+                FileName = whereExecutable,
                 Arguments = command,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

@@ -69,6 +69,10 @@ public sealed class EnvCommand(ISdkVersionManager manager, IAnsiConsole console)
             foreach (var result in results)
             {
                 CommandHelpers.WriteSuccess(console, $"Installed {result.InstalledVersion.CandidateName} {result.InstalledVersion.Alias}");
+                if (!string.IsNullOrWhiteSpace(result.IntegrityWarning))
+                {
+                    CommandHelpers.WriteWarning(console, result.IntegrityWarning);
+                }
             }
 
             return 0;

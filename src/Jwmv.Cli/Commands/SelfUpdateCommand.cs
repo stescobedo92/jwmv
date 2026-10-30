@@ -80,9 +80,11 @@ public sealed class SelfUpdateCommand(ISelfUpdateService selfUpdateService, IAns
             return -1;
         }
 
-        CommandHelpers.WriteSuccess(console, $"jwmv {result.TargetVersion} has been staged.");
+        CommandHelpers.WriteSuccess(console, $"jwmv {result.TargetVersion} downloaded, verified and staged.");
+        CommandHelpers.WriteInfo(console, $"Signed by: {result.SignerIdentity}");
         CommandHelpers.WriteInfo(console, $"Executable: {result.ExecutablePath}");
-        CommandHelpers.WriteInfo(console, "The updater will replace the binary as soon as the current process fully exits.");
+        CommandHelpers.WriteInfo(console, $"Updater log: {result.UpdaterLogPath}");
+        CommandHelpers.WriteInfo(console, "The updater replaces the binary as soon as this process exits and verifies the new version; check the log if jwmv --version does not change.");
         if (result.RestartScheduled)
         {
             CommandHelpers.WriteInfo(console, "A new jwmv process will be started automatically after the replacement finishes.");

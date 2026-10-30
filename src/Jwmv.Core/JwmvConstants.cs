@@ -20,6 +20,7 @@ public static class JwmvConstants
     public const string DefaultAliasVariable = "JWVM_DEFAULT_JAVA_ALIAS";
     public const string DefaultHomeVariable = "JWVM_DEFAULT_JAVA_HOME";
     public const string DefaultBinVariable = "JWVM_DEFAULT_JAVA_BIN";
+    public const string SelfUpdateRepositoryVariable = "JWVM_SELFUPDATE_REPOSITORY";
     public const string GenericActiveVariablePrefix = "JWMV_ACTIVE";
     public const string GenericDefaultVariablePrefix = "JWMV_DEFAULT";
 }

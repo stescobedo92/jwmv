@@ -5,7 +5,8 @@ public enum SelfUpdatePhase
     None = 0,
     Checking = 1,
     Downloading = 2,
-    Extracting = 3,
-    Finalizing = 4,
-    Completed = 5
+    Verifying = 3,
+    Extracting = 4,
+    Finalizing = 5,
+    Completed = 6
 }

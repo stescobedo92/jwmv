@@ -1,3 +1,4 @@
+using System.Text;
 using Jwmv.Core;
 using Jwmv.Core.Abstractions;
 using Jwmv.Core.Exceptions;
@@ -21,6 +22,8 @@ public sealed class SdkVersionManager(
     IHttpClientFactory httpClientFactory,
     JwmvPaths paths) : ISdkVersionManager
 {
+    private const int MaxChecksumDocumentBytes = 64 * 1024;
+
     private readonly IReadOnlyDictionary<string, ISdkCatalogProvider> _providers = catalogProviders
         .ToDictionary(provider => provider.Candidate.Name, StringComparer.OrdinalIgnoreCase);
 
@@ -104,6 +107,8 @@ public sealed class SdkVersionManager(
             package = package with { Checksum = await ReadChecksumAsync(package.ChecksumUri, cancellationToken) };
         }
 
+        ValidateCatalogPackage(candidateName, package);
+
         progress?.Report(new InstallProgressUpdate
         {
             Phase = InstallPhase.Resolving,
@@ -147,15 +152,7 @@ public sealed class SdkVersionManager(
             });
         }
 
-        if (!string.IsNullOrWhiteSpace(package.Checksum) && !string.IsNullOrWhiteSpace(package.ChecksumType))
-        {
-            var checksum = await checksumVerifier.VerifyAsync(archivePath, package.Checksum, package.ChecksumType, cancellationToken);
-            if (!checksum.IsValid)
-            {
-                File.Delete(archivePath);
-                throw new JwmvException($"Checksum verification failed for {package.FileName}. Expected {checksum.Expected}, got {checksum.Actual}.");
-            }
-        }
+        var integrityWarning = await VerifyArchiveIntegrityAsync(package, archivePath, request.AllowUnverified, cancellationToken);
 
         var extractionRoot = Path.Combine(paths.TempDirectory, Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(extractionRoot);
@@ -185,6 +182,7 @@ public sealed class SdkVersionManager(
             await archiveExtractor.ExtractZipAsync(archivePath, extractionRoot, extractionProgress, cancellationToken);
             var home = FindSdkHome(extractionRoot, provider.Candidate);
             var finalDirectory = paths.GetCandidateVersionDirectory(candidateName, package.Alias);
+            EnsureManagedInstallDirectory(candidateName, finalDirectory);
 
             progress?.Report(new InstallProgressUpdate
             {
@@ -240,7 +238,8 @@ public sealed class SdkVersionManager(
             {
                 InstalledVersion = installed,
                 AlreadyInstalled = false,
-                DefaultWasUpdated = defaultWasUpdated
+                DefaultWasUpdated = defaultWasUpdated,
+                IntegrityWarning = integrityWarning
             };
         }
         finally
@@ -258,6 +257,11 @@ public sealed class SdkVersionManager(
         var installed = await ResolveInstalledAsync(normalizedCandidate, version, cancellationToken)
             ?? throw new JavaNotInstalledException($"{normalizedCandidate} {version}");
 
+        if (Directory.Exists(installed.InstallDirectory))
+        {
+            EnsureManagedInstallDirectory(normalizedCandidate, installed.InstallDirectory);
+        }
+
         var config = await configStore.LoadAsync(cancellationToken);
         if (config.DefaultVersions.TryGetValue(normalizedCandidate, out var defaultVersion) &&
             string.Equals(defaultVersion, installed.Alias, StringComparison.OrdinalIgnoreCase))
@@ -272,10 +276,13 @@ public sealed class SdkVersionManager(
             Directory.Delete(installed.InstallDirectory, recursive: true);
         }
 
-        var archivePath = Path.Combine(paths.GetCandidateArchiveDirectory(normalizedCandidate), installed.PackageFileName);
-        if (!string.IsNullOrWhiteSpace(installed.PackageFileName) && File.Exists(archivePath))
+        if (SdkIdentifier.IsSafeFileName(installed.PackageFileName))
         {
-            File.Delete(archivePath);
+            var archivePath = Path.Combine(paths.GetCandidateArchiveDirectory(normalizedCandidate), installed.PackageFileName);
+            if (File.Exists(archivePath))
+            {
+                File.Delete(archivePath);
+            }
         }
 
         await installationStore.DeleteAsync(normalizedCandidate, installed.Alias, cancellationToken);
@@ -576,6 +583,89 @@ function global:prompt {
     private async Task<InstalledSdkVersion?> ResolveInstalledAsync(string candidateName, string version, CancellationToken cancellationToken) =>
         await installationStore.FindAsync(candidateName, version, cancellationToken);
 
+    private async Task<string?> VerifyArchiveIntegrityAsync(SdkPackage package, string archivePath, bool allowUnverified, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(package.Checksum) || string.IsNullOrWhiteSpace(package.ChecksumType))
+        {
+            if (!allowUnverified)
+            {
+                TryDeleteFile(archivePath);
+                throw new IntegrityVerificationException(
+                    $"The catalog does not publish a checksum for {package.FileName}, so its integrity cannot be verified. " +
+                    "Re-run with --allow-unverified to install it anyway.");
+            }
+
+            return $"{package.FileName} was installed unverified: the catalog does not publish a checksum for it.";
+        }
+
+        ChecksumVerificationResult checksum;
+        try
+        {
+            checksum = await checksumVerifier.VerifyAsync(archivePath, package.Checksum, package.ChecksumType, cancellationToken);
+        }
+        catch (IntegrityVerificationException)
+        {
+            TryDeleteFile(archivePath);
+            throw;
+        }
+
+        if (!checksum.IsValid)
+        {
+            TryDeleteFile(archivePath);
+            throw new IntegrityVerificationException($"Checksum verification failed for {package.FileName}. Expected {checksum.Expected}, got {checksum.Actual}.");
+        }
+
+        return checksum.IsWeakAlgorithm
+            ? $"{package.FileName} was verified with a weak checksum algorithm ({checksum.Algorithm}); the source catalog does not publish a stronger hash."
+            : null;
+    }
+
+    private static void ValidateCatalogPackage(string candidateName, SdkPackage package)
+    {
+        if (!SdkIdentifier.IsSafeFileName(package.FileName))
+        {
+            throw new JwmvException($"The {candidateName} catalog returned an unsafe archive file name '{package.FileName}'. Refusing to install it.");
+        }
+
+        if (!SdkIdentifier.IsSafeAlias(package.Alias))
+        {
+            throw new JwmvException($"The {candidateName} catalog returned an unsafe version alias '{package.Alias}'. Refusing to install it.");
+        }
+
+        if (!string.Equals(package.DownloadUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new JwmvException($"The {candidateName} catalog returned a non-HTTPS download URL '{package.DownloadUri}'. Refusing to install it.");
+        }
+    }
+
+    private void EnsureManagedInstallDirectory(string candidateName, string directory)
+    {
+        var candidateRoot = paths.GetCandidateDirectory(candidateName);
+        if (!PathTools.IsStrictlyWithinDirectory(candidateRoot, directory))
+        {
+            throw new JwmvException($"Refusing to modify '{directory}' because it is outside the jwmv directory for {candidateName} ({candidateRoot}).");
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+            // The archive is rejected either way; a leftover file only wastes disk space.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The archive is rejected either way; a leftover file only wastes disk space.
+        }
+    }
+
     private static SdkPackage ResolveBestPackage(string candidateName, IReadOnlyList<SdkPackage> packages, string version)
     {
         var package = packages
@@ -639,15 +729,19 @@ function global:prompt {
             Source = source
         };
 
-    private static string BuildActivationScript(InstalledSdkVersion installed, JavaActivationSource source, bool emitConfirmationMessage = false)
+    private string BuildActivationScript(InstalledSdkVersion installed, JavaActivationSource source, bool emitConfirmationMessage = false)
     {
-        var candidate = installed.CandidateName;
+        var candidate = ResolveCandidateName(installed.CandidateName);
+        // The home variable name comes from the provider definition, never from the on-disk manifest,
+        // because everything interpolated here as an identifier ends up evaluated by Invoke-Expression.
+        var homeEnvironmentVariable = GetProvider(candidate).Candidate.HomeEnvironmentVariable;
         var previousBinVariable = SdkEnvironmentService.GetActiveVariable(candidate, "BIN");
         var versionVariable = SdkEnvironmentService.GetActiveVariable(candidate, "VERSION");
         var homeVariable = SdkEnvironmentService.GetActiveVariable(candidate, "HOME");
         var binVariable = SdkEnvironmentService.GetActiveVariable(candidate, "BIN");
         var sourceVariable = SdkEnvironmentService.GetActiveVariable(candidate, "SOURCE");
-        var homeEnvironmentVariable = installed.HomeEnvironmentVariable;
+        EnsureSafeVariableNames(homeEnvironmentVariable, previousBinVariable, versionVariable, homeVariable, binVariable, sourceVariable);
+
         var home = EscapePowerShell(installed.HomeDirectory);
         var bin = EscapePowerShell(installed.BinDirectory);
         var alias = EscapePowerShell(installed.Alias);
@@ -672,14 +766,16 @@ $env:Path = '{{bin}};' + (@($env:Path -split ';' | Where-Object { $_ -and $_ -ne
 """;
     }
 
-    private static string BuildClearScript(string candidateName)
+    private string BuildClearScript(string candidateName)
     {
-        var previousBinVariable = SdkEnvironmentService.GetActiveVariable(candidateName, "BIN");
-        var versionVariable = SdkEnvironmentService.GetActiveVariable(candidateName, "VERSION");
-        var homeVariable = SdkEnvironmentService.GetActiveVariable(candidateName, "HOME");
-        var binVariable = SdkEnvironmentService.GetActiveVariable(candidateName, "BIN");
-        var sourceVariable = SdkEnvironmentService.GetActiveVariable(candidateName, "SOURCE");
-        var homeEnvironmentVariable = SdkEnvironmentService.GetHomeVariable(candidateName);
+        var candidate = ResolveCandidateName(candidateName);
+        var previousBinVariable = SdkEnvironmentService.GetActiveVariable(candidate, "BIN");
+        var versionVariable = SdkEnvironmentService.GetActiveVariable(candidate, "VERSION");
+        var homeVariable = SdkEnvironmentService.GetActiveVariable(candidate, "HOME");
+        var binVariable = SdkEnvironmentService.GetActiveVariable(candidate, "BIN");
+        var sourceVariable = SdkEnvironmentService.GetActiveVariable(candidate, "SOURCE");
+        var homeEnvironmentVariable = GetProvider(candidate).Candidate.HomeEnvironmentVariable;
+        EnsureSafeVariableNames(homeEnvironmentVariable, previousBinVariable, versionVariable, homeVariable, binVariable, sourceVariable);
 
         return $$"""
 $__jwmvPreviousBin = $env:{{previousBinVariable}}
@@ -695,38 +791,105 @@ Remove-Item Env:\{{sourceVariable}} -ErrorAction SilentlyContinue
 """;
     }
 
+    private static void EnsureSafeVariableNames(params string[] variableNames)
+    {
+        foreach (var variableName in variableNames)
+        {
+            if (!SdkIdentifier.IsSafeEnvironmentVariableName(variableName))
+            {
+                throw new JwmvException($"'{variableName}' is not a valid environment variable name; refusing to generate a shell script with it.");
+            }
+        }
+    }
+
     private static async Task<Dictionary<string, string>> ParseProjectConfigurationAsync(string filePath, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var lines = await File.ReadAllLinesAsync(filePath, cancellationToken);
-        foreach (var rawLine in lines)
+        for (var index = 0; index < lines.Length; index++)
         {
-            var line = rawLine.Trim();
+            var line = lines[index].Trim();
             if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
             {
                 continue;
             }
 
+            var lineNumber = index + 1;
             var parts = line.Split('=', 2, StringSplitOptions.TrimEntries);
-            if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[0]) && !string.IsNullOrWhiteSpace(parts[1]))
+            if (parts.Length == 2)
             {
-                result[SdkIdentifier.NormalizeCandidateName(parts[0])] = parts[1];
+                if (string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+                {
+                    continue;
+                }
+
+                var candidate = SdkIdentifier.NormalizeCandidateName(parts[0]);
+                if (!SdkIdentifier.IsSafeCandidateName(candidate))
+                {
+                    throw new ProjectConfigurationException($"The project file '{filePath}' has an invalid candidate name on line {lineNumber}: '{parts[0]}'.");
+                }
+
+                result[candidate] = ValidateProjectVersion(filePath, lineNumber, parts[1]);
                 continue;
             }
 
-            if (!line.Contains('=', StringComparison.Ordinal))
-            {
-                result[JwmvConstants.CandidateName] = line;
-            }
+            result[JwmvConstants.CandidateName] = ValidateProjectVersion(filePath, lineNumber, line);
         }
 
         return result;
     }
 
+    private static string ValidateProjectVersion(string filePath, int lineNumber, string value)
+    {
+        if (!SdkIdentifier.IsSafeAlias(value))
+        {
+            throw new ProjectConfigurationException(
+                $"The project file '{filePath}' has an invalid version on line {lineNumber}. " +
+                "Versions may only contain letters, digits, dots, dashes, underscores and plus signs.");
+        }
+
+        return value;
+    }
+
     private async Task<string> ReadChecksumAsync(Uri checksumUri, CancellationToken cancellationToken)
     {
+        if (!string.Equals(checksumUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IntegrityVerificationException($"Checksum URL '{checksumUri}' must use HTTPS.");
+        }
+
         using var client = httpClientFactory.CreateClient(ServiceCollectionExtensions.FoojayClientName);
-        return await client.GetStringAsync(checksumUri, cancellationToken);
+        using var response = await client.GetAsync(checksumUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new IntegrityVerificationException($"Unable to download the checksum from '{checksumUri}' (HTTP {(int)response.StatusCode}).");
+        }
+
+        if (response.Content.Headers.ContentLength is > MaxChecksumDocumentBytes)
+        {
+            throw new IntegrityVerificationException($"The checksum document at '{checksumUri}' is unexpectedly large.");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var buffer = new byte[MaxChecksumDocumentBytes + 1];
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(total), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+        }
+
+        if (total > MaxChecksumDocumentBytes)
+        {
+            throw new IntegrityVerificationException($"The checksum document at '{checksumUri}' is unexpectedly large.");
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, total).Trim();
     }
 
     private static string? GetConfiguredDefault(AppConfig config, string candidateName)

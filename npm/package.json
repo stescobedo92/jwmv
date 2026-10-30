@@ -24,7 +24,8 @@
     "jwmv": "./bin/jwmv.js"
   },
   "scripts": {
-    "postinstall": "node ./scripts/install.js"
+    "postinstall": "node ./scripts/install.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "os": [
     "win32"

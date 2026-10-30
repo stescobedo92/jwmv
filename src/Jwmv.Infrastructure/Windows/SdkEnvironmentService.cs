@@ -74,6 +74,11 @@ public sealed class SdkEnvironmentService : ISdkEnvironmentService
 
     private static void SetUserVariable(string name, string? value)
     {
+        if (!SdkIdentifier.IsSafeEnvironmentVariableName(name))
+        {
+            throw new Jwmv.Core.Exceptions.JwmvException($"'{name}' is not a valid environment variable name.");
+        }
+
         Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.User);
         Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process);
     }

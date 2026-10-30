@@ -26,6 +26,54 @@ public static partial class SdkIdentifier
     public static bool IsStableVersion(string version) =>
         !PreReleasePattern().IsMatch(version);
 
+    /// <summary>
+    /// A candidate name is safe when it can be used verbatim as a directory name and as part of an
+    /// environment variable name: letters, digits and dashes only, never a path separator or dot segment.
+    /// </summary>
+    public static bool IsSafeCandidateName(string? value) =>
+        IsSafeToken(value, maxLength: 32, char.IsAsciiLetterOrDigit, static c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    /// <summary>
+    /// A version alias is safe when it can be used verbatim as a single file or directory name:
+    /// it starts with a letter or digit and only contains letters, digits, dots, dashes, underscores and plus signs.
+    /// This rejects <c>..</c>, absolute paths, UNC paths, quotes and whitespace.
+    /// </summary>
+    public static bool IsSafeAlias(string? value) =>
+        IsSafeToken(value, maxLength: 128, char.IsAsciiLetterOrDigit, IsAliasCharacter);
+
+    /// <summary>
+    /// A file name is safe when it is a single path segment without separators, drive letters or trailing dots.
+    /// </summary>
+    public static bool IsSafeFileName(string? value) =>
+        IsSafeToken(value, maxLength: 255, char.IsAsciiLetterOrDigit, IsAliasCharacter) && !value!.EndsWith('.');
+
+    /// <summary>
+    /// Environment variable names are interpolated into generated PowerShell as identifiers, so they must be plain identifiers.
+    /// </summary>
+    public static bool IsSafeEnvironmentVariableName(string? value) =>
+        IsSafeToken(value, maxLength: 255, static c => char.IsAsciiLetter(c) || c == '_', static c => char.IsAsciiLetterOrDigit(c) || c == '_');
+
+    private static bool IsAliasCharacter(char c) =>
+        char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or '+';
+
+    private static bool IsSafeToken(string? value, int maxLength, Func<char, bool> isValidFirstCharacter, Func<char, bool> isValidCharacter)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > maxLength || !isValidFirstCharacter(value[0]))
+        {
+            return false;
+        }
+
+        for (var index = 1; index < value.Length; index++)
+        {
+            if (!isValidCharacter(value[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public static int CompareVersionsDescending(string? left, string? right)
     {
         var leftTokens = Tokenize(left);
@@ -81,4 +129,8 @@ public static partial class SdkIdentifier
 
     [GeneratedRegex(@"(?:alpha|beta|rc|milestone|snapshot|nightly|preview|ea)", RegexOptions.IgnoreCase | RegexOptions.NonBacktracking, matchTimeoutMilliseconds: 100)]
     private static partial Regex PreReleasePattern();
+
+
+
+
 }
