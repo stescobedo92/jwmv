@@ -64,6 +64,35 @@ public sealed class SelfUpdateServiceTests : IDisposable
         Assert.Equal(new Uri(ReleaseBase + "jwmv-win-x64.zip.pem"), result.CertificateAssetUri);
     }
 
+    [Theory]
+    [InlineData("latest-build")]
+    [InlineData("9.9.9-beta.1")]
+    [InlineData("v9.9.9’; Start-Process calc.exe")]
+    public async Task CheckForUpdateAsync_RejectsReleaseTagsThatAreNotPlainSemanticVersions(string tag)
+    {
+        var http = new RoutingHttpClientFactory();
+        http.AddJson($"https://api.github.com/repos/{Repository}/releases/latest", ReleaseJson(tag: tag));
+        var service = CreateService(http: http);
+
+        var exception = await Assert.ThrowsAnyAsync<JwmvException>(() => service.CheckForUpdateAsync(new SelfUpdateRequest { Repository = Repository, Force = true }, CancellationToken.None));
+        Assert.Contains(tag, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("v9.9.9")]
+    [InlineData("9.9.9")]
+    public async Task CheckForUpdateAsync_AcceptsPlainSemanticVersionTags(string tag)
+    {
+        var http = new RoutingHttpClientFactory();
+        http.AddJson($"https://api.github.com/repos/{Repository}/releases/latest", ReleaseJson(tag: tag));
+        var service = CreateService(http: http);
+
+        var result = await service.CheckForUpdateAsync(new SelfUpdateRequest { Repository = Repository, Force = true }, CancellationToken.None);
+
+        Assert.Equal("9.9.9", result.TargetVersion);
+        Assert.Equal(tag, result.ReleaseTag);
+    }
+
     [Fact]
     public async Task ApplyUpdateAsync_FailsWhenChecksumDoesNotMatch()
     {
@@ -168,7 +197,7 @@ public sealed class SelfUpdateServiceTests : IDisposable
             paths);
     }
 
-    private static string ReleaseJson(bool includeSignatureAssets = true, string baseUrl = ReleaseBase)
+    private static string ReleaseJson(bool includeSignatureAssets = true, string baseUrl = ReleaseBase, string tag = "v9.9.9")
     {
         var assets = new List<string>
         {
@@ -186,7 +215,7 @@ public sealed class SelfUpdateServiceTests : IDisposable
         }
 
         return $$"""
-{"tag_name":"v9.9.9","name":"jwmv 9.9.9","html_url":"https://github.com/example-org/example-repo/releases/tag/v9.9.9","assets":[{{string.Join(",", assets)}}]}
+{"tag_name":"{{tag}}","name":"jwmv 9.9.9","html_url":"https://github.com/example-org/example-repo/releases/tag/v9.9.9","assets":[{{string.Join(",", assets)}}]}
 """;
     }
 

@@ -196,7 +196,7 @@ public sealed class JavaVersionManager(
             throw new JwmvException("Only PowerShell shell integration is implemented.");
         }
 
-        var executable = EscapePowerShell(appContext.ExecutablePath);
+        var executable = PowerShellLiteral.Escape(appContext.ExecutablePath);
         var script = $$"""
 $script:jwmvExe = '{{executable}}'
 $env:{{JwmvConstants.ShellIntegrationVariable}} = '1'
@@ -379,11 +379,11 @@ function global:prompt {
         bool emitConfirmationMessage = false,
         bool persistAsDefault = false)
     {
-        var javaHome = EscapePowerShell(installedVersion.JavaHome);
-        var binDirectory = EscapePowerShell(Path.Combine(installedVersion.JavaHome, "bin"));
-        var alias = EscapePowerShell(installedVersion.Alias);
-        var sourceText = EscapePowerShell(source.ToString());
-        var displayAlias = EscapePowerShell(installedVersion.DisplayAlias);
+        var javaHome = PowerShellLiteral.Escape(installedVersion.JavaHome);
+        var binDirectory = PowerShellLiteral.Escape(Path.Combine(installedVersion.JavaHome, "bin"));
+        var alias = PowerShellLiteral.Escape(installedVersion.Alias);
+        var sourceText = PowerShellLiteral.Escape(source.ToString());
+        var displayAlias = PowerShellLiteral.Escape(installedVersion.DisplayAlias);
         var confirmationLine = emitConfirmationMessage
             ? persistAsDefault
                 ? $"Write-Host 'Activated {displayAlias} for this session and saved it as the global default.' -ForegroundColor Green"
@@ -418,8 +418,6 @@ Remove-Item Env:\{{JwmvConstants.SessionHomeVariable}} -ErrorAction SilentlyCont
 Remove-Item Env:\{{JwmvConstants.SessionBinVariable}} -ErrorAction SilentlyContinue
 Remove-Item Env:\{{JwmvConstants.SessionSourceVariable}} -ErrorAction SilentlyContinue
 """;
-
-    private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
     private static async Task<string?> ParseProjectJavaIdentifierAsync(string filePath, CancellationToken cancellationToken)
     {

@@ -436,7 +436,7 @@ public sealed class SdkVersionManager(
             throw new JwmvException("Only PowerShell shell integration is implemented.");
         }
 
-        var executable = EscapePowerShell(appContext.ExecutablePath);
+        var executable = PowerShellLiteral.Escape(appContext.ExecutablePath);
         var script = $$"""
 $script:jwmvExe = '{{executable}}'
 $env:{{JwmvConstants.ShellIntegrationVariable}} = '1'
@@ -742,12 +742,12 @@ function global:prompt {
         var sourceVariable = SdkEnvironmentService.GetActiveVariable(candidate, "SOURCE");
         EnsureSafeVariableNames(homeEnvironmentVariable, previousBinVariable, versionVariable, homeVariable, binVariable, sourceVariable);
 
-        var home = EscapePowerShell(installed.HomeDirectory);
-        var bin = EscapePowerShell(installed.BinDirectory);
-        var alias = EscapePowerShell(installed.Alias);
-        var sourceText = EscapePowerShell(source.ToString());
+        var home = PowerShellLiteral.Escape(installed.HomeDirectory);
+        var bin = PowerShellLiteral.Escape(installed.BinDirectory);
+        var alias = PowerShellLiteral.Escape(installed.Alias);
+        var sourceText = PowerShellLiteral.Escape(source.ToString());
         var confirmation = emitConfirmationMessage
-            ? $"Write-Host 'Activated {EscapePowerShell(candidate)} {alias} for this session.' -ForegroundColor Green"
+            ? $"Write-Host 'Activated {PowerShellLiteral.Escape(candidate)} {alias} for this session.' -ForegroundColor Green"
             : string.Empty;
 
         return $$"""
@@ -903,6 +903,4 @@ Remove-Item Env:\{{sourceVariable}} -ErrorAction SilentlyContinue
             ? config.DefaultJavaAlias
             : null;
     }
-
-    private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 }
