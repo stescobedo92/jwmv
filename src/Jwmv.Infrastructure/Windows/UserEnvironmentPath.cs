@@ -21,12 +21,35 @@ internal sealed record UserEnvironmentPath(string? Value, bool IsExpandable)
 
     public UserEnvironmentPath Prepend(string entry) => this with { Value = PathTools.PrependPathEntry(Value, entry) };
 
-    public UserEnvironmentPath Remove(string entry) => this with { Value = PathTools.RemovePathEntry(Value, entry) };
+    public UserEnvironmentPath Remove(string entry) =>
+        Value is null ? this : this with { Value = PathTools.RemovePathEntry(Value, entry) };
 
     public void Save(IUserEnvironmentStore store)
     {
-        var value = Value ?? string.Empty;
-        store.Set(PathVariable, value, IsExpandable);
-        store.SetProcessValue(PathVariable, Environment.ExpandEnvironmentVariables(value));
+        if (Value is null)
+        {
+            // The user never had a Path value and nothing was added: do not create an empty one.
+            return;
+        }
+
+        store.Set(PathVariable, Value, IsExpandable);
+        store.SetProcessValue(PathVariable, BuildProcessPath(Value));
+    }
+
+    /// <summary>
+    /// Composes the process PATH the way Windows does for new processes (machine entries first, then user
+    /// entries), so the running process keeps the machine directories after the user value changes.
+    /// </summary>
+    private static string BuildProcessPath(string userValue)
+    {
+        var machine = Environment.ExpandEnvironmentVariables(
+            Environment.GetEnvironmentVariable(PathVariable, EnvironmentVariableTarget.Machine) ?? string.Empty);
+        var user = Environment.ExpandEnvironmentVariables(userValue);
+        if (string.IsNullOrEmpty(machine))
+        {
+            return user;
+        }
+
+        return string.IsNullOrEmpty(user) ? machine : machine + Path.PathSeparator + user;
     }
 }
