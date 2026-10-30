@@ -87,12 +87,14 @@ function isAllowedDownloadUrl(value) {
 }
 
 /**
- * Downloads a URL into memory. Only HTTPS GitHub hosts are contacted, redirects are capped and the
- * response size is bounded so a misbehaving server cannot exhaust memory or disk.
+ * Downloads a URL into memory. Only HTTPS GitHub hosts are contacted, redirects are capped, the
+ * response size is bounded and a stalled connection is abandoned after `timeoutMs` of inactivity, so a
+ * misbehaving server cannot exhaust memory or disk or block `npm install` forever.
  */
 function download(url, options = {}) {
   const maxRedirects = options.maxRedirects ?? 5;
   const maxBytes = options.maxBytes ?? 512 * 1024 * 1024;
+  const timeoutMs = options.timeoutMs ?? 60 * 1000;
   const userAgent = options.userAgent ?? "jwmv-npm-installer";
 
   return new Promise((resolve, reject) => {
@@ -148,6 +150,9 @@ function download(url, options = {}) {
         res.on("error", reject);
       });
       request.on("error", reject);
+      request.setTimeout(timeoutMs, () => {
+        request.destroy(new InstallerError(`Timed out while downloading ${currentUrl}: no data received for ${timeoutMs} ms.`));
+      });
     };
 
     get(String(url), maxRedirects);

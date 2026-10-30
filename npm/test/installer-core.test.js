@@ -198,6 +198,34 @@ test("isAllowedDownloadUrl only accepts HTTPS GitHub hosts", () => {
   assert.equal(core.isAllowedDownloadUrl("not a url"), false);
 });
 
+test("download rejects when the server stalls longer than the inactivity timeout", async () => {
+  const https = require("https");
+  const { EventEmitter } = require("events");
+  const originalGet = https.get;
+  let configuredTimeout = null;
+  https.get = () => {
+    const request = new EventEmitter();
+    request.setTimeout = (ms, handler) => {
+      configuredTimeout = ms;
+      setImmediate(handler);
+      return request;
+    };
+    request.destroy = (error) => request.emit("error", error);
+    return request;
+  };
+
+  try {
+    const settled = Promise.race([
+      core.download("https://github.com/example-org/example-repo/releases/download/v1/x.zip", { timeoutMs: 1234 }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("download never settled")), 1000)),
+    ]);
+    await assert.rejects(settled, (error) => error instanceof core.InstallerError && /timed out/i.test(error.message));
+    assert.equal(configuredTimeout, 1234);
+  } finally {
+    https.get = originalGet;
+  }
+});
+
 test("verifySignature accepts a signature from the expected repository workflow", () => {
   const blob = fs.readFileSync(path.join(FIXTURES, "blob.bin"));
 
