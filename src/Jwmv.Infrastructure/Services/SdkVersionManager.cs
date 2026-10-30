@@ -820,7 +820,8 @@ Remove-Item Env:\{{sourceVariable}} -ErrorAction SilentlyContinue
             {
                 if (string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
                 {
-                    continue;
+                    throw new ProjectConfigurationException(
+                        $"The project file '{filePath}' has an incomplete entry on line {lineNumber}: expected '<candidate>=<version>'.");
                 }
 
                 var candidate = SdkIdentifier.NormalizeCandidateName(parts[0]);
