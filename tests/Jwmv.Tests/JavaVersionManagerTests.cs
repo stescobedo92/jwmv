@@ -58,60 +58,6 @@ public sealed class JavaVersionManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task InstallAsync_WithFuzzyTrack_InstallsLatestRemoteAliasEvenIfOlderTrackExistsLocally()
-    {
-        var oldInstalled = new InstalledJavaVersion
-        {
-            Alias = "21.0.2.13-tem",
-            Distribution = "temurin",
-            DistributionAlias = "tem",
-            JavaVersion = "21.0.2+13",
-            DistributionVersion = "21.0.2+13",
-            InstallDirectory = Path.Combine(_workspaceRoot, ".jwmv", "candidates", "java", "21.0.2.13-tem"),
-            JavaHome = Path.Combine(_workspaceRoot, ".jwmv", "candidates", "java", "21.0.2.13-tem"),
-            ArchiveType = "zip",
-            PackageFileName = "old.zip",
-            SourcePackageId = "old-pkg",
-            InstalledAtUtc = DateTimeOffset.UtcNow
-        };
-
-        var newPackage = new JavaDistributionPackage
-        {
-            Id = "new-pkg",
-            Alias = "21.0.4.7-tem",
-            Distribution = "temurin",
-            DistributionAlias = "tem",
-            JavaVersion = "21.0.4+7",
-            DistributionVersion = "21.0.4+7",
-            ArchiveType = "zip",
-            Architecture = "x64",
-            OperatingSystem = "windows",
-            PackageType = "jdk",
-            FileName = "new.zip",
-            DownloadUri = new Uri("https://example.invalid/new.zip"),
-            DirectlyDownloadable = true,
-            IsLatestBuildAvailable = true,
-            ReleaseStatus = "ga",
-            TermOfSupport = "lts",
-            Size = 42
-        };
-
-        var manager = CreateManager(
-            Path.Combine(_workspaceRoot, "repo"),
-            [oldInstalled],
-            [newPackage],
-            createJavaBinaryOnExtract: true);
-
-        var result = await manager.InstallAsync(new InstallJavaRequest
-        {
-            Identifier = "21-tem"
-        }, progress: null, CancellationToken.None);
-
-        Assert.False(result.AlreadyInstalled);
-        Assert.Equal("21.0.4.7-tem", result.InstalledVersion.Alias);
-    }
-
-    [Fact]
     public async Task BuildUseShellScriptAsync_PersistsSelectedVersionAsGlobalDefault()
     {
         var installed = new InstalledJavaVersion
@@ -145,6 +91,31 @@ public sealed class JavaVersionManagerTests : IDisposable
         Assert.Equal("21.0.4.7-tem", windowsEnvironment.LastAppliedAlias);
     }
 
+    [Fact]
+    public async Task UninstallAsync_RefusesToDeleteDirectoriesOutsideCandidatesRoot()
+    {
+        var outside = Path.Combine(_workspaceRoot, "outside");
+        Directory.CreateDirectory(outside);
+        var installed = new InstalledJavaVersion
+        {
+            Alias = "21.0.4.7-tem",
+            Distribution = "temurin",
+            DistributionAlias = "tem",
+            JavaVersion = "21.0.4+7",
+            DistributionVersion = "21.0.4+7",
+            InstallDirectory = outside,
+            JavaHome = outside,
+            ArchiveType = "zip",
+            PackageFileName = "temurin.zip",
+            SourcePackageId = "pkg-1",
+            InstalledAtUtc = DateTimeOffset.UtcNow
+        };
+        var manager = CreateManager(Path.Combine(_workspaceRoot, "repo"), [installed]);
+
+        await Assert.ThrowsAnyAsync<Jwmv.Core.Exceptions.JwmvException>(() => manager.UninstallAsync("21-tem", CancellationToken.None));
+        Assert.True(Directory.Exists(outside));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_workspaceRoot))
@@ -156,8 +127,6 @@ public sealed class JavaVersionManagerTests : IDisposable
     private JavaVersionManager CreateManager(
         string workingDirectory,
         IReadOnlyList<InstalledJavaVersion>? installedVersions = null,
-        IReadOnlyList<JavaDistributionPackage>? packages = null,
-        bool createJavaBinaryOnExtract = false,
         InMemoryConfigStore? configStore = null,
         RecordingWindowsEnvironmentService? windowsEnvironmentService = null)
     {
@@ -173,10 +142,8 @@ public sealed class JavaVersionManagerTests : IDisposable
             new FakeClock(),
             configStore,
             catalogCacheStore,
-            new FakeCatalogClient(packages ?? []),
+            new FakeCatalogClient([]),
             installationStore,
-            new NoopArchiveDownloader(),
-            new NoopArchiveExtractor(createJavaBinaryOnExtract),
             windowsEnvironmentService,
             paths);
     }
@@ -262,26 +229,6 @@ public sealed class JavaVersionManagerTests : IDisposable
         public Task DeleteAsync(string alias, CancellationToken cancellationToken)
         {
             _items.Remove(alias);
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class NoopArchiveDownloader : IArchiveDownloader
-    {
-        public Task DownloadAsync(Uri downloadUri, string destinationPath, IProgress<ArchiveDownloadProgress>? progress, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class NoopArchiveExtractor(bool createJavaBinaryOnExtract = false) : IArchiveExtractor
-    {
-        public Task ExtractZipAsync(string archivePath, string destinationDirectory, IProgress<ArchiveExtractionProgress>? progress, CancellationToken cancellationToken)
-        {
-            if (createJavaBinaryOnExtract)
-            {
-                var javaHome = Path.Combine(destinationDirectory, "jdk");
-                Directory.CreateDirectory(Path.Combine(javaHome, "bin"));
-                File.WriteAllText(Path.Combine(javaHome, "bin", "java.exe"), string.Empty);
-            }
-
             return Task.CompletedTask;
         }
     }

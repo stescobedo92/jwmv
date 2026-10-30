@@ -1,3 +1,4 @@
+using System.Reflection;
 using Jwmv.Cli.Commands;
 using Jwmv.Cli.Infrastructure;
 using Jwmv.Core.Exceptions;
@@ -5,7 +6,6 @@ using Jwmv.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.Reflection;
 
 namespace Jwmv.Cli;
 

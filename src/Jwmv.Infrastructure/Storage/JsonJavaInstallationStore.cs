@@ -1,5 +1,7 @@
 using Jwmv.Core.Abstractions;
+using Jwmv.Core.Exceptions;
 using Jwmv.Core.Models;
+using Jwmv.Core.Utilities;
 
 namespace Jwmv.Infrastructure.Storage;
 
@@ -23,14 +25,20 @@ public sealed class JsonJavaInstallationStore(JwmvPaths paths) : IJavaInstallati
 
     public async Task<InstalledJavaVersion?> FindByAliasAsync(string alias, CancellationToken cancellationToken)
     {
+        if (!SdkIdentifier.IsSafeAlias(alias))
+        {
+            return null;
+        }
+
         var filePath = GetManifestPath(alias);
         return await JsonFileHelper.ReadAsync<InstalledJavaVersion>(filePath, cancellationToken);
     }
 
     public Task SaveAsync(InstalledJavaVersion installedVersion, CancellationToken cancellationToken)
     {
+        var manifestPath = GetManifestPath(installedVersion.Alias);
         paths.EnsureCreated();
-        return JsonFileHelper.WriteAsync(GetManifestPath(installedVersion.Alias), installedVersion, cancellationToken);
+        return JsonFileHelper.WriteAsync(manifestPath, installedVersion, cancellationToken);
     }
 
     public Task DeleteAsync(string alias, CancellationToken cancellationToken)
@@ -44,5 +52,19 @@ public sealed class JsonJavaInstallationStore(JwmvPaths paths) : IJavaInstallati
         return Task.CompletedTask;
     }
 
-    private string GetManifestPath(string alias) => Path.Combine(paths.ManifestsDirectory, $"{alias}.json");
+    private string GetManifestPath(string alias)
+    {
+        if (!SdkIdentifier.IsSafeAlias(alias))
+        {
+            throw new JwmvException($"'{alias}' is not a valid Java version alias.");
+        }
+
+        var manifestPath = Path.Combine(paths.ManifestsDirectory, $"{alias}.json");
+        if (!PathTools.IsStrictlyWithinDirectory(paths.ManifestsDirectory, manifestPath))
+        {
+            throw new JwmvException($"The manifest path for '{alias}' escapes the jwmv manifests directory.");
+        }
+
+        return manifestPath;
+    }
 }

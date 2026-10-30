@@ -6,7 +6,6 @@ public interface IJavaVersionManager
 {
     Task<IReadOnlyList<JavaDistributionPackage>> ListAvailableAsync(JavaCatalogQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<InstalledJavaVersion>> ListInstalledAsync(CancellationToken cancellationToken);
-    Task<InstallJavaResult> InstallAsync(InstallJavaRequest request, IProgress<InstallProgressUpdate>? progress, CancellationToken cancellationToken);
     Task UninstallAsync(string identifier, CancellationToken cancellationToken);
     Task<InstalledJavaVersion> SetDefaultAsync(string identifier, CancellationToken cancellationToken);
     Task<ActiveJavaSelection> ResolveCurrentAsync(string? workingDirectory, CancellationToken cancellationToken);
