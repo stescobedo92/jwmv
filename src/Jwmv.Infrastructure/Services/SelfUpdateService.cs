@@ -10,6 +10,7 @@ using Jwmv.Core;
 using Jwmv.Core.Abstractions;
 using Jwmv.Core.Exceptions;
 using Jwmv.Core.Models;
+using Jwmv.Core.Utilities;
 
 namespace Jwmv.Infrastructure.Services;
 
@@ -40,7 +41,7 @@ public sealed partial class SelfUpdateService(
         var repository = await ResolveRepositoryAsync(request.Repository, cancellationToken);
         var currentVersion = GetCurrentVersion();
         var release = await GetReleaseAsync(repository, request.Tag, cancellationToken);
-        var targetVersion = NormalizeVersionString(release.TagName) ?? release.TagName;
+        var targetVersion = ParseReleaseTag(release.TagName);
         var assetName = GetAssetName(appContext.ProcessArchitecture);
         var asset = FindAsset(release.Assets, assetName)
             ?? throw new JwmvException($"The GitHub release does not contain the expected asset '{assetName}'.");
@@ -375,6 +376,19 @@ public sealed partial class SelfUpdateService(
         return Version.TryParse(normalized, out var version) ? version : null;
     }
 
+    private static string ParseReleaseTag(string tagName)
+    {
+        // The release workflow only ever publishes vMAJOR.MINOR.PATCH tags, and the value ends up in the
+        // generated updater script, so anything else is refused instead of being passed through.
+        var match = ReleaseTagPattern().Match(tagName);
+        if (!match.Success)
+        {
+            throw new JwmvException($"The release tag '{tagName}' is not a vMAJOR.MINOR.PATCH version, so it cannot be a jwmv release.");
+        }
+
+        return match.Groups["version"].Value;
+    }
+
     private static string? NormalizeVersionString(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -408,12 +422,12 @@ public sealed partial class SelfUpdateService(
         string expectedVersion,
         bool restartAfterUpdate)
     {
-        var target = EscapePowerShell(targetExecutablePath);
-        var replacement = EscapePowerShell(replacementExecutablePath);
-        var archive = EscapePowerShell(packagePath);
-        var extract = EscapePowerShell(extractRoot);
-        var log = EscapePowerShell(logPath);
-        var version = EscapePowerShell(expectedVersion);
+        var target = PowerShellLiteral.Escape(targetExecutablePath);
+        var replacement = PowerShellLiteral.Escape(replacementExecutablePath);
+        var archive = PowerShellLiteral.Escape(packagePath);
+        var extract = PowerShellLiteral.Escape(extractRoot);
+        var log = PowerShellLiteral.Escape(logPath);
+        var version = PowerShellLiteral.Escape(expectedVersion);
         var restartLine = restartAfterUpdate
             ? "Start-Process -FilePath $target -WorkingDirectory (Split-Path -Parent $target) | Out-Null"
             : string.Empty;
@@ -513,10 +527,11 @@ try {
         }
     }
 
-    private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
-
     [GeneratedRegex(@"(?<version>\d+\.\d+\.\d+)", RegexOptions.NonBacktracking, matchTimeoutMilliseconds: 100)]
     private static partial Regex SemVerPattern();
+
+    [GeneratedRegex(@"^v?(?<version>[0-9]+\.[0-9]+\.[0-9]+)$", RegexOptions.NonBacktracking, matchTimeoutMilliseconds: 100)]
+    private static partial Regex ReleaseTagPattern();
 
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.NonBacktracking, matchTimeoutMilliseconds: 100)]
     private static partial Regex RepositoryPattern();
