@@ -82,6 +82,21 @@ kotlin=2.3.21
         await Assert.ThrowsAsync<ProjectConfigurationException>(() => manager.FindProjectConfigurationAsync(repo, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("java=", 1)]
+    [InlineData("=21-tem", 1)]
+    [InlineData("gradle=9.5.1\njava=", 2)]
+    public async Task FindProjectConfigurationAsync_RejectsEntriesWithABlankKeyOrValue(string content, int lineNumber)
+    {
+        var repo = Path.Combine(_workspaceRoot, "repo");
+        Directory.CreateDirectory(repo);
+        await File.WriteAllTextAsync(Path.Combine(repo, JwmvConstants.ProjectFileName), content);
+        var manager = CreateManager(repo);
+
+        var exception = await Assert.ThrowsAsync<ProjectConfigurationException>(() => manager.FindProjectConfigurationAsync(repo, CancellationToken.None));
+        Assert.Contains($"line {lineNumber}", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task BuildUseShellScriptAsync_DoesNotPersistDefault()
     {
