@@ -11,9 +11,9 @@ NestedInstallerFiles:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/stescobedo92/jwmv/releases/download/v1.0.0/jwmv-win-x64.zip
-    InstallerSha256: "REPLACE_WITH_ACTUAL_SHA256"
+    InstallerSha256: F60BF92BDDC198F42B8EA9EB6B8ADEA3F059426839FE0630E8C02B998AF23AA7
   - Architecture: arm64
     InstallerUrl: https://github.com/stescobedo92/jwmv/releases/download/v1.0.0/jwmv-win-arm64.zip
-    InstallerSha256: "REPLACE_WITH_ACTUAL_SHA256"
+    InstallerSha256: 5FBE001EA347B00DA80B8182875EACF379F20D287EFCC6D999E920224605F944
 ManifestType: installer
 ManifestVersion: 1.6.0

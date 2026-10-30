@@ -31,6 +31,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IJavaInstallationStore, JsonJavaInstallationStore>();
         services.AddSingleton<ISdkInstallationStore, JsonSdkInstallationStore>();
         services.AddSingleton<IArchiveExtractor>(_ => new ZipArchiveExtractor());
+        services.AddSingleton<IUserEnvironmentStore>(_ => OperatingSystem.IsWindows()
+            ? new RegistryUserEnvironmentStore()
+            : throw new PlatformNotSupportedException("jwmv manages the Windows user environment and only runs on Windows."));
         services.AddSingleton<IWindowsEnvironmentService, WindowsEnvironmentService>();
         services.AddSingleton<ISdkEnvironmentService, SdkEnvironmentService>();
         services.AddSingleton<IShellProfileIntegrationService, ShellProfileIntegrationService>();

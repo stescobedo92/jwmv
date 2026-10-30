@@ -50,7 +50,21 @@ public sealed class ShellProfileIntegrationService(IAppContext appContext, ISdkV
             updatedContent = currentContent.TrimEnd() + Environment.NewLine + Environment.NewLine + managedBlock + Environment.NewLine;
         }
 
-        await File.WriteAllTextAsync(targetPath, updatedContent, cancellationToken);
+        // Write through a temporary file so an interrupted write cannot truncate the user's profile.
+        var temporaryPath = $"{targetPath}.{Guid.NewGuid():n}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, updatedContent, cancellationToken);
+            File.Move(temporaryPath, targetPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+
         return targetPath;
     }
 
