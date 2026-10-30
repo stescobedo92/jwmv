@@ -26,7 +26,7 @@ A fast, lightweight CLI tool to install, manage, and switch between Java/JDK and
 ### winget (recommended)
 
 ```powershell
-winget install stescobedo92.jwmv
+winget install stescobedo92.JWMV
 ```
 
 ### npm

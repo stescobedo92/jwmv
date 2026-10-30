@@ -353,23 +353,25 @@ jobs:
           git checkout -b "jwmv-${version}" upstream/master
 
           # Create manifest directory
-          $manifestDir = "manifests/s/stescobedo92/jwmv/${version}"
+          # The package was accepted into winget-pkgs as stescobedo92.JWMV, so updates must use that identifier.
+          $packageId = "stescobedo92.JWMV"
+          $manifestDir = "manifests/s/stescobedo92/JWMV/${version}"
           New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
 
           # version.yaml
           @"
           # yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
-          PackageIdentifier: stescobedo92.jwmv
+          PackageIdentifier: stescobedo92.JWMV
           PackageVersion: ${version}
           DefaultLocale: en-US
           ManifestType: version
           ManifestVersion: 1.6.0
-          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.version.yaml" -NoNewline
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/$packageId.yaml" -NoNewline
 
           # installer.yaml
           @"
           # yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
-          PackageIdentifier: stescobedo92.jwmv
+          PackageIdentifier: stescobedo92.JWMV
           PackageVersion: ${version}
           MinimumOSVersion: 10.0.17763.0
           InstallerType: zip
@@ -386,18 +388,18 @@ jobs:
               InstallerSha256: ${arm64Hash}
           ManifestType: installer
           ManifestVersion: 1.6.0
-          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.installer.yaml" -NoNewline
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/$packageId.installer.yaml" -NoNewline
 
           # defaultLocale.yaml
           @"
           # yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
-          PackageIdentifier: stescobedo92.jwmv
+          PackageIdentifier: stescobedo92.JWMV
           PackageVersion: ${version}
           PackageLocale: en-US
           Publisher: Sergio Triana Escobedo
           PublisherUrl: https://github.com/stescobedo92
           Author: Sergio Triana Escobedo
-          PackageName: jwmv
+          PackageName: JWMV
           PackageUrl: https://github.com/stescobedo92/jwmv
           License: MIT
           LicenseUrl: https://github.com/stescobedo92/jwmv/blob/main/LICENSE
@@ -410,18 +412,18 @@ jobs:
             - developer-tools
           ManifestType: defaultLocale
           ManifestVersion: 1.6.0
-          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/stescobedo92.jwmv.locale.en-US.yaml" -NoNewline
+          "@ -replace '(?m)^          ', '' | Set-Content -Path "$manifestDir/$packageId.locale.en-US.yaml" -NoNewline
 
           # Commit and push to the fork (the branch is owned by this workflow, so overwriting a previous attempt is intended)
           git add .
-          git commit -m "New package: stescobedo92.jwmv version ${version}"
+          git commit -m "New version: stescobedo92.JWMV version ${version}"
           git push -u origin "jwmv-${version}" --force
 
           # Create PR
           gh pr create `
             --repo microsoft/winget-pkgs `
             --head "stescobedo92:jwmv-${version}" `
-            --title "New package: stescobedo92.jwmv version ${version}" `
-            --body "## Package submission`n`n- Package: stescobedo92.jwmv`n- Version: ${version}`n- URL: https://github.com/stescobedo92/jwmv`n`nAuto-submitted by CI."
+            --title "New version: stescobedo92.JWMV version ${version}" `
+            --body "## Package submission`n`n- Package: stescobedo92.JWMV`n- Version: ${version}`n- URL: https://github.com/stescobedo92/jwmv`n`nAuto-submitted by CI."
 
           Pop-Location
