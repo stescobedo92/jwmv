@@ -219,8 +219,26 @@ test("verifySignature rejects a certificate issued for another repository", () =
   const blob = fs.readFileSync(path.join(FIXTURES, "blob.bin"));
   assert.throws(
     () => core.verifySignature(blob, fixture("leaf-wrong-repo.sig"), fixture("leaf-wrong-repo.pem"), REPOSITORY, testTrustRoot()),
-    /not a workflow of/i
+    /release workflow of/i
   );
+});
+
+test("verifyIdentity only accepts the release workflow of the expected repository", () => {
+  core.verifyIdentity(IDENTITY, REPOSITORY);
+  core.verifyIdentity("https://github.com/example-org/example-repo/.github/workflows/release.yml@refs/heads/main", REPOSITORY);
+  core.verifyIdentity("https://github.com/Example-Org/Example-Repo/.github/workflows/release.yml@refs/tags/v9.9.9", REPOSITORY);
+
+  for (const identity of [
+    "https://github.com/example-org/example-repo/.github/workflows/ci.yml@refs/heads/main",
+    "https://github.com/example-org/example-repo/.github/workflows/release.yaml@refs/tags/v9.9.9",
+    "https://github.com/example-org/example-repo/.github/workflows/release.yml.bak@refs/tags/v9.9.9",
+    "https://github.com/example-org/example-repo/.github/workflows/release.yml@heads/main",
+    "https://github.com/example-org/example-repo/evil/.github/workflows/release.yml@refs/tags/v9.9.9",
+    "https://github.com/example-org/example-repo-evil/.github/workflows/release.yml@refs/tags/v9.9.9",
+    "https://github.com/attacker/example-repo/.github/workflows/release.yml@refs/tags/v9.9.9",
+  ]) {
+    assert.throws(() => core.verifyIdentity(identity, REPOSITORY), /release workflow of/i, identity);
+  }
 });
 
 test("verifySignature rejects a certificate from another OIDC issuer", () => {

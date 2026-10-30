@@ -17,6 +17,9 @@ const https = require("https");
 const path = require("path");
 const zlib = require("zlib");
 
+// Only signatures produced by this workflow file of the expected repository are accepted.
+const RELEASE_WORKFLOW_FILE = "release.yml";
+
 const GITHUB_ACTIONS_ISSUER = "https://token.actions.githubusercontent.com";
 const CODE_SIGNING_EKU = "1.3.6.1.5.5.7.3.3";
 const FULCIO_ISSUER_OID = "1.3.6.1.4.1.57264.1.1";
@@ -470,10 +473,14 @@ function readWorkflowIdentity(certificate) {
 }
 
 function verifyIdentity(identity, repository) {
-  const prefix = `https://github.com/${String(repository).trim().replace(/^\/+|\/+$/g, "")}/.github/workflows/`;
-  const at = identity.indexOf("@");
-  if (!identity.toLowerCase().startsWith(prefix.toLowerCase()) || at <= prefix.length || !identity.slice(at + 1).startsWith("refs/")) {
-    throw new InstallerError(`The release was signed by '${identity}', which is not a workflow of '${repository}'.`);
+  // Repository names are case-insensitive on GitHub; the workflow path and the ref prefix are not.
+  const value = String(identity);
+  const repositoryPrefix = `https://github.com/${String(repository).trim().replace(/^\/+|\/+$/g, "")}/`;
+  const workflowPrefix = `.github/workflows/${RELEASE_WORKFLOW_FILE}@refs/`;
+  const matchesRepository = value.slice(0, repositoryPrefix.length).toLowerCase() === repositoryPrefix.toLowerCase();
+  const matchesWorkflow = value.slice(repositoryPrefix.length, repositoryPrefix.length + workflowPrefix.length) === workflowPrefix;
+  if (!matchesRepository || !matchesWorkflow || value.length <= repositoryPrefix.length + workflowPrefix.length) {
+    throw new InstallerError(`The release was signed by '${value}', which is not the release workflow of '${repository}'.`);
   }
 }
 
@@ -564,5 +571,6 @@ module.exports = {
   safeJoin,
   extractZip,
   parseCertificate,
+  verifyIdentity,
   verifySignature,
 };

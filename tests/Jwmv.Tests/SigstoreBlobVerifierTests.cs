@@ -64,6 +64,32 @@ public sealed class SigstoreBlobVerifierTests : IDisposable
         Assert.Throws<IntegrityVerificationException>(() => verifier.Verify(_blobPath, Sign(key), leaf.ExportCertificatePem(), Repository));
     }
 
+    [Theory]
+    [InlineData("https://github.com/example-org/example-repo/.github/workflows/ci.yml@refs/heads/main")]
+    [InlineData("https://github.com/example-org/example-repo/.github/workflows/release.yaml@refs/tags/v9.9.9")]
+    [InlineData("https://github.com/example-org/example-repo/.github/workflows/release.yml.bak@refs/tags/v9.9.9")]
+    [InlineData("https://github.com/example-org/example-repo/.github/workflows/release.yml@heads/main")]
+    [InlineData("https://github.com/example-org/example-repo/evil/.github/workflows/release.yml@refs/tags/v9.9.9")]
+    public void Verify_RejectsWorkflowsOtherThanTheReleaseWorkflow(string identity)
+    {
+        var (leaf, key) = _chain.IssueLeaf(identity, GitHubIssuer);
+        var verifier = new SigstoreBlobVerifier(_chain.TrustRoot);
+
+        Assert.Throws<IntegrityVerificationException>(() => verifier.Verify(_blobPath, Sign(key), leaf.ExportCertificatePem(), Repository));
+    }
+
+    [Fact]
+    public void Verify_AcceptsTheReleaseWorkflowRunFromABranch()
+    {
+        const string identity = "https://github.com/example-org/example-repo/.github/workflows/release.yml@refs/heads/main";
+        var (leaf, key) = _chain.IssueLeaf(identity, GitHubIssuer);
+        var verifier = new SigstoreBlobVerifier(_chain.TrustRoot);
+
+        var result = verifier.Verify(_blobPath, Sign(key), leaf.ExportCertificatePem(), Repository);
+
+        Assert.Equal(identity, result.SignerIdentity);
+    }
+
     [Fact]
     public void Verify_RejectsCertificateFromUnexpectedOidcIssuer()
     {
