@@ -14,7 +14,7 @@
 
     <!-- Analyzers / Source generators -->
     <PackageVersion Include="Meziantou.Analyzer" Version="3.0.318" />
-    <PackageVersion Include="Roslynator.Analyzers" Version="4.13.1" />
+    <PackageVersion Include="Roslynator.Analyzers" Version="5.0.1" />
     <PackageVersion Include="Roslynator.CodeAnalysis.Analyzers" Version="4.13.1" />
 
     <!-- Testing -->
